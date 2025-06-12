@@ -17,6 +17,38 @@ This tool aims to shorten the lifecycle from incident response to threat hunting
 
 ---
 
+### 🖼️ Screenshots
+
+A quick look at the IOCTopus interface.
+
+**Main Window & IOC Search**
+![IOCTopus Main Window](./docs/images/main-window.png)
+
+**Search View**
+![IOCTopus Search View](./docs/images/search-results.png)
+
+**Bulk Search View**
+![IOCTopus Bulk Search View](./docs/images/bulk-search.png)
+
+**Submit View**
+![IOCTopus Submit View](./docs/images/submit-window.png)
+
+**Configuring API Keys**
+![IOCTopus API Configuration View](./docs/images/set-api-keys-window.png)
+
+**Indicator Details Results**
+![IOCTopus Indicator Details](./docs/images/indicator-details-results.png)
+
+**Relationships Results**
+![IOCTopus Relationships Results](./docs/images/relationships-results.png)
+
+**Web Analysis Results**
+![IOCTopus Search View](./docs/images/web-analysis-results.png)
+
+---
+
+---
+
 ### Key Features
 
 -   **All-in-One Interface**: Look up IOCs from VirusTotal, urlscan.io, and Validin without leaving the application.
