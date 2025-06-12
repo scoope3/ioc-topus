@@ -85,7 +85,7 @@ A quick look at the IOCTopus interface.
 
 ### 🛡️ Secure by Design: API Key Encryption
 
-We take security seriously. When you enter your API keys into IOCTopus:
+When you enter your API keys into IOCTopus:
 1.  A master encryption key is generated and stored securely in your user home directory (`~/.ioc_topus_key`).
 2.  Your API keys are encrypted using this master key.
 3.  The **encrypted keys** are saved to a local `.env` file.
@@ -149,7 +149,7 @@ IOCTopus is packaged for easy installation. Using a virtual environment is stron
 
 This project's development was significantly accelerated with the assistance of **Google's Gemini**. Its capabilities in code generation, debugging complex errors (like circular imports), and strategic planning were instrumental in building IOCTopus.
 
-For a detailed view of our upcoming features and long-term goals, please see our [**Project Roadmap**](ROADMAP.md).
+For a detailed view of upcoming features and long-term goals, please see the [**Project Roadmap**](ROADMAP.md).
 
 ---
 *Disclaimer: This tool is provided for educational and research purposes only. The user is responsible for adhering to the terms of service of all integrated API providers.*
