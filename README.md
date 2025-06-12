@@ -10,6 +10,17 @@ IOCTopus streamlines your workflow by fetching, correlating, and displaying rich
 
 ---
 
+### ✨ Project Vision: From Analysis to Hunting
+
+IOCTopus is designed with a two-phase mission.
+
+1.  **IOC Search Mode (Current)**: To provide a best-in-class tool for rapidly enriching and analyzing known indicators. The intelligence gathered here is the crucial first step.
+2.  **Infrastructure Hunting Mode (Future)**: To use the data from IOC analysis as a launchpad for proactive hunting. The ultimate goal is to empower researchers to pivot from a single indicator to discovering an adversary's entire operational infrastructure.
+
+This tool aims to shorten the lifecycle from incident response to threat hunting.
+
+---
+
 ### Key Features
 
 -   **All-in-One Interface**: Look up IOCs from VirusTotal, urlscan.io, and Validin without leaving the application.
@@ -77,6 +88,14 @@ IOCTopus is a standard Python application.
     -   Use the **Submit** button to send new URLs or files for analysis.
     -   Use the **Export** widget to export your search results.
     -   Click on any IOC in the top results list to see detailed, categorized data in the tabs below.
+
+---
+
+### 🚀 Development and Acknowledgements
+
+This project's development was significantly accelerated with the assistance of **Google's Gemini**. Its capabilities in code generation, debugging complex errors (like circular imports), and strategic planning were instrumental in building IOCTopus.
+
+For a detailed view of our upcoming features and long-term goals, please see our [**Project Roadmap**](ROADMAP.md).
 
 ---
 *Disclaimer: This tool is provided for educational and research purposes only. The user is responsible for adhering to the terms of service of all integrated API providers.*
