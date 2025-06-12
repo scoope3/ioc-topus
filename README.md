@@ -40,9 +40,11 @@ We take security seriously. When you enter your API keys into IOCTopus:
 
 ---
 
-### Installation
+---
 
-IOCTopus is a standard Python application.
+### Installation & Usage
+
+IOCTopus is packaged for easy installation. Using a virtual environment is strongly recommended.
 
 1.  **Clone the repository:**
     ```bash
@@ -50,36 +52,37 @@ IOCTopus is a standard Python application.
     cd ioc-topus
     ```
 
-2.  **Create a virtual environment:**
+2.  **Create and activate a virtual environment:**
     ```bash
+    # Create the environment
     python -m venv venv
-    # On Windows
+
+    # Activate it (on Windows)
     .\venv\Scripts\activate
-    # On macOS/Linux
-    source venv/bin/activate
+
+    # Activate it (on macOS/Linux)
+    # source venv/bin/activate
     ```
 
-3.  **Install dependencies:**
-
+3.  **Install the project:**
+    This single command installs IOCTopus and all of its dependencies in editable mode.
     ```bash
-    pip install click requests pillow python-dotenv cryptography
+    python -m pip install -e .
     ```
 
----
-
-### Usage
-
-1.  **Run the application:**
+4.  **Run the application:**
+    Now you can run the app using the simple command-line script.
     ```bash
-    python -m ioc_topus.cli gui
+    ioc-topus gui
     ```
 
-2.  **Set Your API Keys:**
+5.  **Set Your API Keys:**
     -   On first launch, click the **"Set API Keys"** button.
     -   Enter your keys for VirusTotal, urlscan.io, and Validin.
     -   Click **"Apply"**. Your keys will be encrypted and saved for future sessions.
 
-3.  **Start Analyzing!**
+
+6.  **Start Analyzing!**
     -   Use the **Search** or **Bulk Search** buttons to look up indicators.
     -   Use the **Submit** button to send new URLs or files for analysis.
     -   Use the **Export** widget to export your search results.
