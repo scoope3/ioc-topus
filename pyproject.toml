@@ -1,0 +1,38 @@
+[project]
+name = "ioc_topus"
+version = "0.1.0"
+description = "IOCTopus – modular threat-intelligence GUI"
+readme = "README.md"
+authors = [{ name = "Sam Cooper", email = "ddshdds2@gmail.com" }]
+license = "MIT"                   # simple SPDX expression
+requires-python = ">=3.9"
+
+dependencies = [
+  "click>=8.1",
+  "requests>=2.32",
+  "Pillow>=10.0",
+  "python-dotenv>=1.0",
+  "cryptography>=42.0",
+  "vt-py>=0.19.0",
+]
+
+[tool.setuptools.packages.find]   # package discovery rules
+where = ["."]
+include = ["ioc_topus*"]          # ioc_topus and every sub-package
+
+[project.optional-dependencies]
+dev = [
+  "black>=24.3",
+  "ruff>=0.4.5",
+  "mypy>=1.9",
+  "pytest>=8.2",
+  "pytest-cov>=4.1",
+  "responses>=0.25",  # HTTP mocking library
+]
+
+[project.scripts]
+ioc-topus = "ioc_topus.cli:cli"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
