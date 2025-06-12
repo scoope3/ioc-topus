@@ -271,7 +271,7 @@ def process_iocs_with_selective_apis(
     use_vt: bool,
     use_us: bool,
     use_validin: bool,
-    results_queue: queue.Queue
+    results_queue: queue.Queue,
 ):
     """
     Processes a list of IOCs using the specified APIs. If an IOC is a URL,
@@ -287,39 +287,49 @@ def process_iocs_with_selective_apis(
 
         partials: List[Tuple[str, str, dict | None, List[str], str | None]] = []
 
-        # --- Step 1: Query the primary ioc
+        # --- Step 1: Query the primary ioc with individual error handling ---
+
         if use_vt:
-            vt_q = Queue()
-            _get_vt_client().query_ioc(ioc_str, ioc_type, vt_q)
-            vt_tup = _get_first_5tuple(vt_q)
-            # Parse the raw data before adding it
-            vt_parsed = (
-                parse_virustotal_response(vt_tup[2], vt_tup[1])
-                if vt_tup[2] and vt_tup[4] is None
-                else None
-            )
-            partials.append((vt_tup[0], vt_tup[1], vt_parsed, vt_tup[3], vt_tup[4]))
+            try:
+                vt_q = Queue()
+                _get_vt_client().query_ioc(ioc_str, ioc_type, vt_q)
+                vt_tup = _get_first_5tuple(vt_q)
+                vt_parsed = (
+                    parse_virustotal_response(vt_tup[2], vt_tup[1])
+                    if vt_tup[2] and vt_tup[4] is None
+                    else None
+                )
+                partials.append((vt_tup[0], vt_tup[1], vt_parsed, vt_tup[3], vt_tup[4]))
+            except Exception as e:
+                # If VT fails, record the error tuple and continue
+                partials.append((ioc_str, ioc_type, None, ["VirusTotal API"], f"VirusTotal Error: {e}"))
 
         if use_us:
-            # urlscan is generally only for URLs or the primary IOC
-            us_q = Queue()
-            _get_us_client().query_ioc(ioc_str, ioc_type, us_q)
-            partials.append(_get_first_5tuple(us_q))
+            try:
+                us_q = Queue()
+                _get_us_client().query_ioc(ioc_str, ioc_type, us_q)
+                partials.append(_get_first_5tuple(us_q))
+            except Exception as e:
+                # If urlscan fails, record the error tuple and continue
+                partials.append((ioc_str, ioc_type, None, ["SecurityTrails API"], f"urlscan.io Error: {e}"))
 
         if use_validin and ioc_type in ("domain", "ip_address"):
-            vq = Queue()
-            (query_validin_domain if ioc_type == "domain" else query_validin_ip)(ioc_str, vq)
-            partials.append(_get_first_5tuple(vq))
+            try:
+                vq = Queue()
+                (query_validin_domain if ioc_type == "domain" else query_validin_ip)(
+                    ioc_str, vq
+                )
+                partials.append(_get_first_5tuple(vq))
+            except Exception as e:
+                 # If Validin fails, record the error tuple and continue
+                partials.append((ioc_str, ioc_type, None, ["Validin API"], f"Validin Error: {e}"))
 
         # --- Step 2: If it's a URL, query the extracted hostname ---
         if ioc_type == "url":
             try:
-                # Use .hostname which is more reliable than .netloc
                 hostname = urlparse(ioc_str).hostname
                 if hostname:
-                    related_ioc_type = validate_ioc(hostname) # Check if it's a domain or IP
-
-                    # Query the pivoted hostname against relevant services
+                    related_ioc_type = validate_ioc(hostname)
                     if use_vt:
                         piv_vt_q = Queue()
                         _get_vt_client().query_ioc(hostname, related_ioc_type, piv_vt_q)
@@ -330,20 +340,21 @@ def process_iocs_with_selective_apis(
                             else None
                         )
                         partials.append((piv_vt_tup[0], piv_vt_tup[1], piv_vt_parsed, piv_vt_tup[3], piv_vt_tup[4]))
-
                     if use_validin:
                         piv_val_q = Queue()
                         (query_validin_domain if related_ioc_type == "domain" else query_validin_ip)(hostname, piv_val_q)
                         partials.append(_get_first_5tuple(piv_val_q))
-
             except Exception as e:
                 print(f"Error during URL pivot for '{ioc_str}': {e}")
 
 
         # --- Step 3: Merge ALL collected results (primary + pivoted) ---
         if not partials:
-            results_queue.put((ioc_str, ioc_type, None, [], "No APIs selected or an error occurred."))
+            results_queue.put(
+                (ioc_str, ioc_type, None, [], "No APIs selected or an error occurred.")
+            )
             continue
-
+        
+        # The merge function combines successful data and aggregates errors from the partials list
         merged = merge_api_results(ioc_str, *partials)
         results_queue.put(merged)

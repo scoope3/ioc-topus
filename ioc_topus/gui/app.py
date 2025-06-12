@@ -1414,7 +1414,6 @@ def build_gui():
                 if err:
                     # Show the error in a popup
                     messagebox.showerror("Error Processing Submission", f"IOC '{ioc_str}': {err}")
-                    # Optionally update status_bar, but messagebox is primary for errors
                     # status_bar.config(text=f"Error submitting '{ioc_str}': {err}")
                 else:
                     # If success, add to the main Treeview
@@ -1453,30 +1452,26 @@ def build_gui():
                     tag = 'oddrow' if (idx % 2) else 'evenrow'
                     existing_tags = list(tree.item(item_id, "tags")) # Convert to list
                     
-                    # Remove previous oddrow/evenrow tags to prevent accumulation
                     if 'oddrow' in existing_tags: existing_tags.remove('oddrow')
                     if 'evenrow' in existing_tags: existing_tags.remove('evenrow')
                     
-                    # Add the new striping tag
+
                     final_tags = [tag] + existing_tags # Prepend striping tag
                     tree.item(item_id, tags=tuple(final_tags))
 
 
         except queue.Empty:
-            # We’ve drained whatever was in the queue for this call
             pass
 
         # Update the static attribute that tracks total processed items
         check_submit_file_results.processed_so_far += processed_this_call
         
         if check_submit_file_results.processed_so_far >= total_count:
-            # Done => stop spinner + inform user
             progress_bar.stop()
             messagebox.showinfo("Submission Completed", f"Finished processing {check_submit_file_results.processed_so_far}/{total_count} submitted IOCs.")
             status_bar.config(text=f"Finished processing {check_submit_file_results.processed_so_far} submitted IOCs.")
             check_submit_file_results.processed_so_far = 0 # Reset for next bulk operation
         else:
-            # Not done => schedule another check in 100ms
             status_bar.config(text=f"Processing submissions... {check_submit_file_results.processed_so_far}/{total_count}")
             root.after(100, check_submit_file_results, results_queue, total_count)
 
@@ -1486,44 +1481,43 @@ def build_gui():
 
     check_submit_file_results.processed_so_far = 0
 
-    def check_results_file_upload(results_queue, total_count):
-        processed_count = 0
+    def check_results_file_upload(results_queue, total_count, all_errors: list):
         """
-        After uploading multiple IOCs from a file, the queue will be pulled for each IOC's results
-        and add them to the main Treeview. 
+        After uploading multiple IOCs, this function pulls results from the queue,
+        updates the GUI, and collects any non-blocking errors for a final summary.
         """
+        processed_in_this_check = 0
         try:
-            while True:
+            while True: # Process all items currently in the queue
                 result = results_queue.get_nowait()
-                processed_count += 1
-                if len(result) == 4:
-                    ioc_, ioc_type_, parsed_data, sources_ = result
-                    error_ = None
-                else:
-                    ioc_, ioc_type_, parsed_data, sources_, error_ = result
+                processed_in_this_check += 1
+                
+                # The processor now always returns a 5-tuple
+                ioc_, ioc_type_, parsed_data, sources_, error_ = result
 
                 if error_:
-                    messagebox.showerror("Error", f"IOC '{ioc_}': {error_}")
-                    status_bar.config(text=f"Error adding IOC '{ioc_}': {error_}")
-                else:
-                    if parsed_data:
-                        response_cache[ioc_] = {
-                            "type": ioc_type_,
-                            "sources": sources_,
-                            "data": parsed_data
-                        }
+                    all_errors.append(f"IOC '{ioc_}': {error_}")
+                
+                # If the call was successful (no error and we have data), process it
+                if not error_ and parsed_data:
+                    response_cache[ioc_] = {
+                        "type": ioc_type_,
+                        "sources": sources_,
+                        "data": parsed_data
+                    }
                     malicious_count = 0
                     total_vendors = 0
-                    vm = parsed_data.get("vendors_marked_malicious") if parsed_data else None
+                    vm = parsed_data.get("vendors_marked_malicious")
                     if vm and isinstance(vm, str) and "/" in vm:
                         try:
                             parts = vm.split("/")
                             malicious_count = int(parts[0])
                             total_vendors = int(parts[1])
-                        except:
+                        except ValueError:
                             pass
+                    
                     sources_ = reorder_sources(sources_)
-                    joined_sources = ", ".join(reorder_sources(sources_))
+                    joined_sources = ", ".join(sources_)
                     new_item = tree.insert("", "end", values=(ioc_, joined_sources))
 
                     if malicious_count > 0:
@@ -1531,25 +1525,44 @@ def build_gui():
 
                     status_bar.config(text=f"IOC '{ioc_}' added successfully.")
 
-                children = tree.get_children()
-                for idx, item_id in enumerate(children):
-                    tag = 'oddrow' if (idx % 2) else 'evenrow'
-                    existing_tags = tree.item(item_id, "tags")
-                    if "malicious" in existing_tags:
-                        tree.item(item_id, tags=(tag, "malicious"))
-                    else:
-                        tree.item(item_id, tags=(tag,))
-
         except queue.Empty:
             pass
-        check_results_file_upload.processed_so_far += processed_count
+
+        # Update the total count of processed items
+        if not hasattr(check_results_file_upload, "processed_so_far"):
+            check_results_file_upload.processed_so_far = 0
+        check_results_file_upload.processed_so_far += processed_in_this_check
+
+        # Check if we are finished with the entire batch
         if check_results_file_upload.processed_so_far >= total_count:
             progress_bar.stop()
-            messagebox.showinfo("Completed", f"Uploaded {total_count} IOCs.")
-            status_bar.config(text=f"Uploaded {total_count} IOCs.")
+            status_bar.config(text=f"Bulk search complete. Processed {total_count} IOCs.")
+            
+            if all_errors:
+                error_message = (
+                    "The search completed with the following non-blocking errors:\n\n"
+                    + "\n".join(all_errors)
+                )
+                messagebox.showwarning("Partial Search Errors", error_message)
+            else:
+                messagebox.showinfo("Completed", f"Successfully processed {total_count} IOCs.")
+            
+            # Reset counter for the next run
+            check_results_file_upload.processed_so_far = 0
+            
+            # Re-apply alternating row colors after all items are inserted
+            children = tree.get_children()
+            for idx, item_id in enumerate(children):
+                tag = 'oddrow' if (idx % 2) else 'evenrow'
+                existing_tags = tree.item(item_id, "tags")
+                if "malicious" in existing_tags:
+                    tree.item(item_id, tags=(tag, "malicious"))
+                else:
+                    tree.item(item_id, tags=(tag,))
+            return 
         else:
-            # Otherwise, schedule another check
-            root.after(100, check_results_file_upload, results_queue, total_count)
+            root.after(100, check_results_file_upload, results_queue, total_count, all_errors)
+
     check_results_file_upload.processed_so_far = 0
 
     def open_search_popup():
@@ -1699,29 +1712,26 @@ def build_gui():
                 messagebox.showwarning("Warning", "No valid lines found in file.")
                 return
 
-            popup.destroy()
-
             results_q = queue.Queue()
+            all_errors = []  # <-- NEW: Create a list to hold errors.
 
             def worker():
-                for ioc_val in lines:
-                    try:
-                        process_iocs_with_selective_apis(
-                            ioc_iterable=[ioc_val],
-                            use_vt=use_vt,
-                            use_us=use_us,
-                            use_validin=use_val,
-                            results_queue=results_q
-                        )
-                    except Exception as e:
-                        results_q.put((ioc_val, None, None, [], f"Error processing IOC '{ioc_val}': {str(e)}"))
+                # This call now passes the list of IOCs directly to the processor
+                process_iocs_with_selective_apis(
+                    ioc_iterable=lines,  # <-- Pass the whole list
+                    use_vt=use_vt,
+                    use_us=use_us,
+                    use_validin=use_val,
+                    results_queue=results_q
+                )
 
             t = threading.Thread(target=worker, daemon=True)
             t.start()
 
             progress_bar.start(10)
             check_results_file_upload.processed_so_far = 0
-            root.after(100, check_results_file_upload, results_q, len(lines))
+            # We now pass the new `all_errors` list to the checking function
+            root.after(100, check_results_file_upload, results_q, len(lines), all_errors)
 
         go_btn = tk.Button(
             btn_frame, text="Search Now", command=do_bulk_search, bg="#6A5ACD", fg="white",
