@@ -68,7 +68,6 @@ A quick look at the IOCTopus interface.
 ![IOCTopus Search View](./docs/images/web-analysis-results.png)
 
 
----
 
 ---
 
@@ -93,7 +92,6 @@ When you enter your API keys into IOCTopus:
 
 **Your API keys are never stored in plaintext on your disk.**
 
----
 
 ---
 
