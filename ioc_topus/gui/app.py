@@ -872,24 +872,35 @@ def build_gui():
 
             # --- Button Frame and Apply Button ---
             def apply_api_keys():
-                
-                # Encrypt keys before persisting them
+                """Encrypt and persist keys, then clear cached clients."""
                 keys_to_persist = {}
                 vt_key = vt_entry.get().strip()
                 us_key = st_entry.get().strip()
                 va_key = validin_entry.get().strip()
 
-                if vt_key: keys_to_persist['vt'] = encrypt_string(vt_key)
-                if us_key: keys_to_persist['urlscan'] = encrypt_string(us_key)
-                if va_key: keys_to_persist['validin'] = encrypt_string(va_key)
-                
+                if vt_key:
+                    keys_to_persist["vt"] = encrypt_string(vt_key)
+                if us_key:
+                    keys_to_persist["urlscan"] = encrypt_string(us_key)
+                if va_key:
+                    keys_to_persist["validin"] = encrypt_string(va_key)
+
                 if keys_to_persist:
                     persist_api_keys(**keys_to_persist)
-                    # Clear cached clients to force re-initialization with new keys
+                    
+                    # --- FIX: ADD THIS SECTION ---
+                    # After saving new keys, we must clear the old, "stale"
+                    # API clients from the processor. This forces the app to
+                    # create new clients with the correct keys on the next API call.
                     _proc._VT_CLIENT = None
                     _proc._US_CLIENT = None
-                    messagebox.showinfo("Success", "API keys have been encrypted and saved.", parent=popup)
-                
+                    _proc._VA_CLIENT = None
+                    # --- END FIX ---
+
+                    messagebox.showinfo(
+                        "Success", "API keys have been encrypted and saved.", parent=popup
+                    )
+
                 popup.destroy()
 
             # Create a dedicated frame for the button

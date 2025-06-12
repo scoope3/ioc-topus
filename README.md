@@ -68,7 +68,6 @@ A quick look at the IOCTopus interface.
 ![IOCTopus Search View](./docs/images/web-analysis-results.png)
 
 
-
 ---
 
 ### Key Features
