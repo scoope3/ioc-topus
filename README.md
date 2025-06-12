@@ -1,9 +1,5 @@
 # 🐙 IOCTopus - Your Threat Intelligence Swiss Army Knife
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/scoope3/ioc-topus/main/docs/logo_placeholder.png" alt="IOCTopus Logo" width="200"/>
-</p>
-
 **Tired of juggling a dozen browser tabs for IOC analysis? IOCTopus is a fast, powerful, GUI-based threat intelligence aggregator that brings the data to you.**
 
 IOCTopus streamlines your workflow by fetching, correlating, and displaying rich data for Indicators of Compromise (IPs, domains, URLs, and file hashes) from the most trusted APIs in threat intelligence.
