@@ -272,6 +272,7 @@ def process_iocs_with_selective_apis(
     use_us: bool,
     use_validin: bool,
     results_queue: queue.Queue,
+    delay_seconds: float = 0
 ):
     """
     Processes a list of IOCs using the specified APIs. If an IOC is a URL,
@@ -358,3 +359,5 @@ def process_iocs_with_selective_apis(
         # The merge function combines successful data and aggregates errors from the partials list
         merged = merge_api_results(ioc_str, *partials)
         results_queue.put(merged)
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)

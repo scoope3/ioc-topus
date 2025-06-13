@@ -1483,37 +1483,31 @@ def build_gui():
 
     def check_results_file_upload(results_queue, total_count, all_errors: list):
         """
-        After uploading multiple IOCs, this function pulls results from the queue,
-        updates the GUI, and collects any non-blocking errors for a final summary.
+        Periodically checks the results queue, updates the GUI in real-time,
+        and collects any non-blocking errors for a final summary.
         """
-        processed_in_this_check = 0
         try:
-            while True: # Process all items currently in the queue
+            while True: 
                 result = results_queue.get_nowait()
-                processed_in_this_check += 1
+                check_results_file_upload.processed_so_far += 1
                 
-                # The processor now always returns a 5-tuple
                 ioc_, ioc_type_, parsed_data, sources_, error_ = result
 
                 if error_:
                     all_errors.append(f"IOC '{ioc_}': {error_}")
                 
-                # If the call was successful (no error and we have data), process it
-                if not error_ and parsed_data:
+                if parsed_data:
                     response_cache[ioc_] = {
                         "type": ioc_type_,
                         "sources": sources_,
                         "data": parsed_data
                     }
                     malicious_count = 0
-                    total_vendors = 0
                     vm = parsed_data.get("vendors_marked_malicious")
                     if vm and isinstance(vm, str) and "/" in vm:
                         try:
-                            parts = vm.split("/")
-                            malicious_count = int(parts[0])
-                            total_vendors = int(parts[1])
-                        except ValueError:
+                            malicious_count = int(vm.split('/')[0])
+                        except (ValueError, IndexError):
                             pass
                     
                     sources_ = reorder_sources(sources_)
@@ -1528,16 +1522,21 @@ def build_gui():
         except queue.Empty:
             pass
 
-        # Update the total count of processed items
-        if not hasattr(check_results_file_upload, "processed_so_far"):
-            check_results_file_upload.processed_so_far = 0
-        check_results_file_upload.processed_so_far += processed_in_this_check
+        status_bar.config(text=f"Processing {check_results_file_upload.processed_so_far}/{total_count}...")
 
-        # Check if we are finished with the entire batch
+        children = tree.get_children()
+        for idx, item_id in enumerate(children):
+            tag = 'oddrow' if (idx % 2) else 'evenrow'
+            existing_tags = tree.item(item_id, "tags")
+            if "malicious" in existing_tags:
+                tree.item(item_id, tags=(tag, "malicious"))
+            else:
+                tree.item(item_id, tags=(tag,))
+
         if check_results_file_upload.processed_so_far >= total_count:
             progress_bar.stop()
             status_bar.config(text=f"Bulk search complete. Processed {total_count} IOCs.")
-            
+
             if all_errors:
                 error_message = (
                     "The search completed with the following non-blocking errors:\n\n"
@@ -1546,24 +1545,12 @@ def build_gui():
                 messagebox.showwarning("Partial Search Errors", error_message)
             else:
                 messagebox.showinfo("Completed", f"Successfully processed {total_count} IOCs.")
-            
-            # Reset counter for the next run
+
             check_results_file_upload.processed_so_far = 0
-            
-            # Re-apply alternating row colors after all items are inserted
-            children = tree.get_children()
-            for idx, item_id in enumerate(children):
-                tag = 'oddrow' if (idx % 2) else 'evenrow'
-                existing_tags = tree.item(item_id, "tags")
-                if "malicious" in existing_tags:
-                    tree.item(item_id, tags=(tag, "malicious"))
-                else:
-                    tree.item(item_id, tags=(tag,))
-            return 
+            return  # Stop the recurring 'after' calls
+
         else:
             root.after(100, check_results_file_upload, results_queue, total_count, all_errors)
-
-    check_results_file_upload.processed_so_far = 0
 
     def open_search_popup():
         """
@@ -1627,7 +1614,8 @@ def build_gui():
 
     def open_upload_popup():
         """
-        Opens a popup for bulk IOC search from a file, with a standardized UI design.
+        Opens a popup for bulk IOC search from a file, with a standardized UI design
+        and a new configurable delay slider for rate limiting.
         """
         popup = tk.Toplevel(root)
         popup.title("Bulk Indicator Search")
@@ -1637,13 +1625,12 @@ def build_gui():
         container = tk.Frame(popup, bg="#F0F0F0", padx=15, pady=15)
         container.pack(fill="both", expand=True)
 
-        # Standardized Title
         lbl_title = tk.Label(
             container, text="Bulk Indicator Search", font=("Segoe UI", 14, "bold"), bg="#F0F0F0"
         )
         lbl_title.pack(pady=(0, 15))
 
-        # --- File Selection Frame ---
+        # --- Your existing File Selection Frame (No changes needed here) ---
         file_frame = tk.LabelFrame(container, text="Source File", font=("Segoe UI", 11, "bold"), bg="#F0F0F0", padx=10, pady=10)
         file_frame.pack(fill="x", pady=5)
         tk.Label(file_frame, text="Select a .txt file with one IOC per line:", bg="#F0F0F0", font=FONT_LABEL).pack(anchor="w", pady=(0,5))
@@ -1663,7 +1650,7 @@ def build_gui():
         browse_btn = tk.Button(entry_file_frame, text="Browse...", bg="#9370DB", fg="#FFFFFF", font=FONT_BUTTON, command=browse_file)
         browse_btn.pack(side="left", padx=(5,0))
 
-        # --- API Selection Frame ---
+        # --- Your existing API Selection Frame (No changes needed here) ---
         api_frame = tk.LabelFrame(container, text="Data Sources", font=("Segoe UI", 11, "bold"), bg="#F0F0F0", padx=10, pady=10)
         api_frame.pack(fill="x", pady=5)
         api_checkbox_frame = tk.Frame(api_frame, bg="#F0F0F0")
@@ -1677,10 +1664,36 @@ def build_gui():
         tk.Checkbutton(api_checkbox_frame, text="urlscan.io", variable=urlscan_var, bg="#F0F0F0", font=FONT_LABEL).pack(side="left", padx=10)
         tk.Checkbutton(api_checkbox_frame, text="Validin (Domain/IP)", variable=val_var, bg="#F0F0F0", font=FONT_LABEL).pack(side="left", padx=10)
 
+        # --- NEW: Delay Slider Frame ---
+        delay_frame = tk.LabelFrame(container, text="API Rate Limit Delay", font=("Segoe UI", 11, "bold"), bg="#F0F0F0", padx=10, pady=10)
+        delay_frame.pack(fill="x", pady=5)
+        delay_var = tk.DoubleVar(value=1.0) # Default to 1 second
+
+        tk.Label(delay_frame, text="Delay between IOCs (seconds):", bg="#F0F0F0", font=FONT_LABEL).pack(side="left", padx=(0, 10))
+        
+        delay_slider = tk.Scale(
+            delay_frame,
+            from_=0.0,
+            to=5.0,
+            orient="horizontal",
+            variable=delay_var,
+            resolution=0.1, # Allow for tenths of a second
+            length=200,     # Give it a decent width
+            bg="#F0F0F0",
+            troughcolor='#BDC3C7',
+            highlightthickness=0
+        )
+        delay_slider.pack(side="left", fill="x", expand=True)
+        
+        current_delay_label = tk.Label(delay_frame, textvariable=delay_var, width=4, bg="#F0F0F0", font=FONT_LABEL)
+        current_delay_label.pack(side="left", padx=(5,0))
+        # --- END NEW ---
+
         # --- Action Button ---
         btn_frame = tk.Frame(container, bg="#F0F0F0")
         btn_frame.pack(fill="x", pady=(20, 0))
 
+        # --- This is your do_bulk_search function with one line added ---
         def do_bulk_search():
             chosen_file = file_path_var.get().strip()
             if not chosen_file:
@@ -1695,15 +1708,13 @@ def build_gui():
                 messagebox.showerror("Error", "Select at least one API to use.")
                 return
 
+            # --- ADD THIS LINE: Get the value from the new slider ---
+            selected_delay = delay_var.get()
+
             try:
                 with open(chosen_file, "r", encoding="utf-8") as f:
                     raw_lines = (line.strip() for line in f)
-                    lines = []
-                    for line in raw_lines:
-                        if line.endswith(","):
-                            line = line.rstrip(",")
-                        if line:
-                            lines.append(line)
+                    lines = [line.rstrip(",") for line in raw_lines if line and line.rstrip(",")]
             except Exception as e:
                 messagebox.showerror("Error Reading File", f"Could not read the selected file:\n{e}")
                 return
@@ -1712,17 +1723,20 @@ def build_gui():
                 messagebox.showwarning("Warning", "No valid lines found in file.")
                 return
 
+            popup.destroy()
+
             results_q = queue.Queue()
-            all_errors = []  # <-- NEW: Create a list to hold errors.
+            all_errors = []
 
             def worker():
-                # This call now passes the list of IOCs directly to the processor
+                # --- Pass the new delay value to the processor ---
                 process_iocs_with_selective_apis(
-                    ioc_iterable=lines,  # <-- Pass the whole list
+                    ioc_iterable=lines,
                     use_vt=use_vt,
                     use_us=use_us,
                     use_validin=use_val,
-                    results_queue=results_q
+                    results_queue=results_q,
+                    delay_seconds=selected_delay # <-- Pass delay here
                 )
 
             t = threading.Thread(target=worker, daemon=True)
@@ -1730,7 +1744,6 @@ def build_gui():
 
             progress_bar.start(10)
             check_results_file_upload.processed_so_far = 0
-            # We now pass the new `all_errors` list to the checking function
             root.after(100, check_results_file_upload, results_q, len(lines), all_errors)
 
         go_btn = tk.Button(
@@ -1738,6 +1751,7 @@ def build_gui():
             font=("Segoe UI", 11, "bold"), relief="raised", width=15
         )
         go_btn.pack(side="right")
+
 
 
     def export_to_csv():
