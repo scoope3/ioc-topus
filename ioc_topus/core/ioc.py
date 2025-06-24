@@ -13,7 +13,7 @@ from typing import Literal
 # ---------------------------------------------------------------------------#
 # 1)  Low-level type detection helper 
 # ---------------------------------------------------------------------------#
-def validate_ioc(ioc: str) -> Literal["url", "ip_address", "domain", "file_hash"]:
+def validate_ioc(ioc: str) -> Literal["url", "ip_address", "domain", "file_hash", "fingerprint_hash"]:
     """
     Return the canonical IOC type or raise ``ValueError`` if *ioc* is invalid.
 
@@ -21,6 +21,7 @@ def validate_ioc(ioc: str) -> Literal["url", "ip_address", "domain", "file_hash"
     * ip_address  – IPv4 dotted-quad
     * domain      – example.com / sub.example.co.uk
     * file_hash   – MD5 / SHA-1 / SHA-256 / SHA-512 / TLSH / etc.
+    * fingerprint_hash – JARM / other fingerprints (for Validin pivots)
     """
     # 1. URL
     if re.match(r"^https?://", ioc, re.IGNORECASE):
@@ -40,16 +41,32 @@ def validate_ioc(ioc: str) -> Literal["url", "ip_address", "domain", "file_hash"
         return "domain"
 
     # 4. Hex hashes
-    if re.match(r"^[A-Fa-f0-9]{32}$", ioc):      # MD5
-        return "file_hash"
-    if re.match(r"^[A-Fa-f0-9]{40}$", ioc):      # SHA-1
-        return "file_hash"
-    if re.match(r"^[A-Fa-f0-9]{64}$", ioc):      # SHA-256
-        return "file_hash"
-    if re.match(r"^[A-Fa-f0-9]{128}$", ioc):     # SHA-512
-        return "file_hash"
-    if re.match(r"^[A-Fa-f0-9]{70,72}$", ioc):   # TLSH
-        return "file_hash"
+    if re.match(r"^[A-Fa-f0-9]+$", ioc):
+        length = len(ioc)
+        
+        # Standard file hashes - only for specific known lengths
+        if length == 128:  # SHA-512
+            return "file_hash"
+        elif length == 64:  # SHA-256
+            return "file_hash"
+        elif length == 40:  # SHA-1
+            return "file_hash"
+        elif length in [70, 71, 72]:  # TLSH
+            return "file_hash"
+        
+        # For 32-char hashes, we need to decide between MD5 and fingerprint
+        # Since Validin uses these for fingerprints, default to fingerprint_hash
+        # unless user explicitly wants file hash behavior
+        elif length == 32:  # Could be MD5 or fingerprint
+            return "fingerprint_hash"  # Default to fingerprint for Validin
+        
+        # JARM fingerprints
+        elif length == 62:
+            return "fingerprint_hash"
+        
+        # Any other hex string between 8-128 chars is likely a fingerprint
+        elif 8 <= length <= 128:
+            return "fingerprint_hash"
 
     raise ValueError(f"Invalid IOC format: {ioc!r}")
 
@@ -77,7 +94,7 @@ class IOC:
     def __init__(self, value: str, ioc_type: str | None = None):
         if ioc_type is None:
             ioc_type = validate_ioc(value)
-        elif ioc_type not in ("url", "ip_address", "domain", "file_hash"):
+        elif ioc_type not in ("url", "ip_address", "domain", "file_hash", "fingerprint_hash"):
             raise ValueError(f"Unsupported IOC type {ioc_type!r}")
 
         # Bypass frozen check

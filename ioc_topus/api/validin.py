@@ -12,21 +12,6 @@ from typing import Dict
 from ioc_topus import config  # single-source-of-truth for API keys
 
 
-# ---------------------------------------------------------------------------#
-# 0) tiny wrapper so tests can monkey-patch it
-# ---------------------------------------------------------------------------#
-def _make_request(url: str, headers: Dict[str, str]):
-    return requests.get(url, headers=headers, timeout=15)
-
-def validin_request(url, headers):
-    """
-    Wraps a GET request to the Validin endpoint.
-    Quota checked via API.
-    """
-    response = requests.get(url, headers=headers)
-    return response
-
-
 def query_validin_domain(domain_str, results_queue):
     """
     If the user selected "Use Validin" for a domain IOC, this function is called.
@@ -262,3 +247,108 @@ def query_validin_ip(ip_address, results_queue):
 
     except Exception as e:
         results_queue.put((ip_address, "ip_address", None, ["Validin API"], str(e)))
+
+def query_validin_hash(hash_str, results_queue):
+    """
+    Queries the Validin API for pivots related to a hash/fingerprint.
+    This uses the general hash pivot endpoint that searches across all categories.
+    
+    Hash categories supported by Validin:
+    - BANNER_0_HASH
+    - BODY_SHA1
+    - CERT_FINGERPRINT
+    - CERT_FINGERPRINT_SHA256
+    - CLASS_0_HASH
+    - CLASS_1_HASH
+    - FAVICON_HASH
+    - HEADER_HASH
+    - JARM
+    """
+    
+    if not config.VALIDIN_API_KEY:
+        results_queue.put((hash_str, "fingerprint_hash", None, ["Validin API"], "No Validin API key set"))
+        return
+
+    base_url = "https://app.validin.com/api/axon"
+    endpoint = f"{base_url}/hash/pivots/{hash_str}"
+    headers = {
+        "Authorization": f"Bearer {config.VALIDIN_API_KEY}"
+    }
+    
+    # Add query parameters for better results
+    params = {
+        "limit": 250,
+        "wildcard": "false"
+    }
+
+    try:
+        print(f"\n=== VALIDIN HASH API DEBUG ===")
+        print(f"Endpoint: {endpoint}")
+        print(f"Hash searched: {hash_str}")
+        
+        resp = validin_request(endpoint, headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        # Print the full response for debugging
+        print(f"Full API Response:")
+        import json
+        print(json.dumps(data, indent=2))
+        print(f"=== END VALIDIN DEBUG ===\n")
+        
+        records = data.get("records", {})
+        
+        if not records:
+            # No pivot data found
+            results_queue.put((hash_str, "fingerprint_hash", {"validin_hash_pivots": {}}, ["Validin API"], None))
+            return
+
+        # Process the records into a structured format
+        all_pivots = []
+        
+        for record_type, values_list in records.items():
+            # Extract the category (IP or HOST) from record type
+            if "-IP" in record_type:
+                indicator_type = "IP"
+            elif "-HOST" in record_type:
+                indicator_type = "Domain"
+            else:
+                indicator_type = "Unknown"
+            
+            for item in values_list:
+                if isinstance(item, dict):
+                    pivot_data = {
+                        "indicator": item.get("value", ""),
+                        "indicator_type": indicator_type,
+                        "first_seen": item.get("first_seen", 0),
+                        "last_seen": item.get("last_seen", 0),
+                        "record_type": record_type
+                    }
+                    all_pivots.append(pivot_data)
+        
+        # Sort by indicator type then by value
+        all_pivots.sort(key=lambda x: (x["indicator_type"], x["indicator"]))
+        
+        # Construct the final data dictionary
+        final_data = {
+            "validin_hash_pivots": {
+                "pivot_data": all_pivots,
+                "searched_hash": hash_str,
+                "total_results": len(all_pivots)
+            }
+        }
+
+        results_queue.put((hash_str, "fingerprint_hash", final_data, ["Validin API"], None))
+
+    except Exception as e:
+        results_queue.put((hash_str, "fingerprint_hash", None, ["Validin API"], str(e)))
+
+
+# Update the validin_request function to accept params
+def validin_request(url, headers, params=None):
+    """
+    Wraps a GET request to the Validin endpoint.
+    Quota checked via API.
+    """
+    response = requests.get(url, headers=headers, params=params, timeout=15)
+    return response

@@ -21,18 +21,19 @@ The initial version of IOCTopus establishes a powerful foundation for IOC analys
 
 ### 🚀 **Future Milestones**
 
-This is where we're headed next. Our development is organized into two primary "modes" of operation.
+This is where IOCTopus is headed next with development. The program is organized into two primary "modes" of operation.
 
 #### **Phase 1: IOC Search Mode Enhancements**
 
 The immediate focus is on enriching the existing IOC analysis capabilities.
 
 -   **Revise Exporting Capabilities**: Overhaul the CSV export feature to produce more structured, actionable reports with prettier formatting and customizable output.
--   **Integrate Validin Hash Pivoting**: Leverage Validin's API to pivot from file hashes to related infrastructure and intelligence.
+-   **Integrate Validin Hash Pivoting**: Leverage Validin's API to pivot from host responses for fingerprints and hashes (e.g., JARM, certificate hash, banner and other header hashes)
 -   **Integrate Criminal IP API**: Add another source of IP and domain intelligence, providing a more complete picture of network indicators.
 -   **Integrate Sandbox APIs**:
     -   **CrowdStrike Falcon Sandbox**
     -   **Recorded Future Tria.ge**
+-   **Integrate abuse.ch telemetry**
 
 #### **Phase 2: Infrastructure Hunting Mode**
 

@@ -28,7 +28,7 @@ from ioc_topus.api.virustotal import (
     parse_virustotal_response,
 )
 from ioc_topus.api.urlscan import UrlscanClient
-from ioc_topus.api.validin import query_validin_domain, query_validin_ip
+from ioc_topus.api.validin import query_validin_domain, query_validin_ip, query_validin_hash
 
 # ────────────────────────────────#
 #  Re-use *one* client per API
@@ -237,7 +237,7 @@ def fetch_and_parse_ioc_stonly(ioc_str: str, results_queue: Queue) -> None:
 
 def fetch_and_parse_ioc_validinonly(ioc_str: str, results_queue: Queue) -> None:
     """
-    Calls Validin **only** (domain/IP).
+    Calls Validin **only** (domain/IP/fingerprint_hash).
     """
     try:
         ioc_type_val = validate_ioc(ioc_str)
@@ -250,11 +250,15 @@ def fetch_and_parse_ioc_validinonly(ioc_str: str, results_queue: Queue) -> None:
             q = Queue()
             query_validin_ip(ioc_str, q)
             results_queue.put(q.get())
+        elif ioc_type_val in ("fingerprint_hash", "file_hash"):
+            q = Queue()
+            query_validin_hash(ioc_str, q)
+            results_queue.put(q.get())
         else:
             results_queue.put(
-                (ioc_str, ioc_type_val, None, [], "Validin only supports domain or IP IOCs")
+                (ioc_str, ioc_type_val, None, [], "Validin only supports domain, IP, or hash IOCs")
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         results_queue.put((ioc_str, None, None, [], str(exc)))
 
 
@@ -280,10 +284,14 @@ def process_iocs_with_selective_apis(
     results to be merged.
     """
     for ioc_str in ioc_iterable:
+        original_ioc_str = str(ioc_str).strip()
+        
+        print(f"DEBUG process_iocs: Starting with IOC = '{original_ioc_str}'")
+        
         try:
-            ioc_type = validate_ioc(ioc_str)
+            ioc_type = validate_ioc(original_ioc_str)
         except ValueError as exc:
-            results_queue.put((ioc_str, None, None, [], str(exc)))
+            results_queue.put((original_ioc_str, None, None, [], str(exc)))
             continue
 
         partials: List[Tuple[str, str, dict | None, List[str], str | None]] = []
@@ -293,8 +301,15 @@ def process_iocs_with_selective_apis(
         if use_vt:
             try:
                 vt_q = Queue()
-                _get_vt_client().query_ioc(ioc_str, ioc_type, vt_q)
+                _get_vt_client().query_ioc(original_ioc_str, ioc_type, vt_q)
                 vt_tup = _get_first_5tuple(vt_q)
+                
+                # Validate the IOC in the tuple
+                if vt_tup[0] != original_ioc_str:
+                    print(f"WARNING: VT changed IOC from '{original_ioc_str}' to '{vt_tup[0]}'")
+                    # Force it back
+                    vt_tup = (original_ioc_str, vt_tup[1], vt_tup[2], vt_tup[3], vt_tup[4])
+                
                 vt_parsed = (
                     parse_virustotal_response(vt_tup[2], vt_tup[1])
                     if vt_tup[2] and vt_tup[4] is None
@@ -302,33 +317,64 @@ def process_iocs_with_selective_apis(
                 )
                 partials.append((vt_tup[0], vt_tup[1], vt_parsed, vt_tup[3], vt_tup[4]))
             except Exception as e:
-                # If VT fails, record the error tuple and continue
-                partials.append((ioc_str, ioc_type, None, ["VirusTotal API"], f"VirusTotal Error: {e}"))
+                error_msg = str(e)
+                if "429" in error_msg:
+                    error_msg = "VirusTotal Error: API rate limit exceeded (no remaining quota)"
+                else:
+                    error_msg = f"VirusTotal Error: {e}"
+                # Don't include source when there's an error and no data
+                partials.append((original_ioc_str, ioc_type, None, [], error_msg))  # Empty sources list
 
         if use_us:
             try:
                 us_q = Queue()
-                _get_us_client().query_ioc(ioc_str, ioc_type, us_q)
-                partials.append(_get_first_5tuple(us_q))
+                _get_us_client().query_ioc(original_ioc_str, ioc_type, us_q)
+                us_tup = _get_first_5tuple(us_q)
+                
+                # Validate the IOC in the tuple
+                if us_tup[0] != original_ioc_str:
+                    print(f"WARNING: URLScan changed IOC from '{original_ioc_str}' to '{us_tup[0]}'")
+                    # Force it back
+                    us_tup = (original_ioc_str, us_tup[1], us_tup[2], us_tup[3], us_tup[4])
+                
+                partials.append(us_tup)
             except Exception as e:
-                # If urlscan fails, record the error tuple and continue
-                partials.append((ioc_str, ioc_type, None, ["SecurityTrails API"], f"urlscan.io Error: {e}"))
+                error_msg = str(e)
+                if "429" in error_msg:
+                    error_msg = "URLScan.io Error: API rate limit exceeded (no remaining quota)"
+                else:
+                    error_msg = f"URLScan.io Error: {e}"
+                partials.append((original_ioc_str, ioc_type, None, [], error_msg))  # Empty sources list
 
-        if use_validin and ioc_type in ("domain", "ip_address"):
+        if use_validin and ioc_type in ("domain", "ip_address", "fingerprint_hash", "file_hash"):
             try:
                 vq = Queue()
-                (query_validin_domain if ioc_type == "domain" else query_validin_ip)(
-                    ioc_str, vq
-                )
-                partials.append(_get_first_5tuple(vq))
+                if ioc_type == "domain":
+                    query_validin_domain(original_ioc_str, vq)
+                elif ioc_type == "ip_address":
+                    query_validin_ip(original_ioc_str, vq)
+                elif ioc_type in ("fingerprint_hash", "file_hash"):
+                    query_validin_hash(original_ioc_str, vq)
+                val_tup = _get_first_5tuple(vq)
+                
+                # Validate the IOC in the tuple
+                if val_tup[0] != original_ioc_str:
+                    print(f"WARNING: Validin changed IOC from '{original_ioc_str}' to '{val_tup[0]}'")
+                    val_tup = (original_ioc_str, val_tup[1], val_tup[2], val_tup[3], val_tup[4])
+                
+                partials.append(val_tup)
             except Exception as e:
-                 # If Validin fails, record the error tuple and continue
-                partials.append((ioc_str, ioc_type, None, ["Validin API"], f"Validin Error: {e}"))
+                error_msg = str(e)
+                if "429" in error_msg:
+                    error_msg = "Validin Error: API rate limit exceeded (no remaining quota)"
+                else:
+                    error_msg = f"Validin Error: {e}"
+                partials.append((original_ioc_str, ioc_type, None, [], error_msg))  # Empty sources list
 
         # --- Step 2: If it's a URL, query the extracted hostname ---
         if ioc_type == "url":
             try:
-                hostname = urlparse(ioc_str).hostname
+                hostname = urlparse(original_ioc_str).hostname
                 if hostname:
                     related_ioc_type = validate_ioc(hostname)
                     if use_vt:
@@ -346,18 +392,24 @@ def process_iocs_with_selective_apis(
                         (query_validin_domain if related_ioc_type == "domain" else query_validin_ip)(hostname, piv_val_q)
                         partials.append(_get_first_5tuple(piv_val_q))
             except Exception as e:
-                print(f"Error during URL pivot for '{ioc_str}': {e}")
-
+                print(f"Error during URL pivot for '{original_ioc_str}': {e}")
 
         # --- Step 3: Merge ALL collected results (primary + pivoted) ---
         if not partials:
             results_queue.put(
-                (ioc_str, ioc_type, None, [], "No APIs selected or an error occurred.")
+                (original_ioc_str, ioc_type, None, [], "No APIs selected or an error occurred.")
             )
             continue
         
-        # The merge function combines successful data and aggregates errors from the partials list
-        merged = merge_api_results(ioc_str, *partials)
+        merged = merge_api_results(original_ioc_str, *partials)
+        
+        # Final validation
+        if merged[0] != original_ioc_str:
+            print(f"ERROR: Merge corrupted IOC from '{original_ioc_str}' to '{merged[0]}'")
+            merged = (original_ioc_str, merged[1], merged[2], merged[3], merged[4])
+        
+        print(f"DEBUG process_iocs: Final result IOC = '{merged[0]}'")
+        
         results_queue.put(merged)
         if delay_seconds > 0:
             time.sleep(delay_seconds)

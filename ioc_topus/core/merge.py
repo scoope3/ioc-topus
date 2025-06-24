@@ -9,7 +9,7 @@ one canonical result:
 Rules
 -----
 1. A *falsey* / empty value NEVER overwrites a non-empty one.
-2. Dict-valued keys are merged deeply (so VT "relationships" aren’t
+2. Dict-valued keys are merged deeply (so VT "relationships" aren't
    wiped out by a later provider that returns `{}`).
 3. `sources` are deduplicated.
 """
@@ -56,6 +56,22 @@ def merge_api_results(
         *api_tuples: A variable number of 5-tuples, each representing
                      an API result for either the primary or pivoted IOC.
     """
+    if not isinstance(primary_ioc_str, str):
+        print(f"WARNING: primary_ioc_str is not a string: {type(primary_ioc_str)} = {primary_ioc_str}")
+        # Try to extract a string value
+        if isinstance(primary_ioc_str, dict):
+            if 'url' in primary_ioc_str:
+                primary_ioc_str = primary_ioc_str['url']
+            elif 'value' in primary_ioc_str:
+                primary_ioc_str = primary_ioc_str['value']
+            else:
+                primary_ioc_str = str(primary_ioc_str)
+        else:
+            primary_ioc_str = str(primary_ioc_str)
+    
+    # Store the clean IOC
+    clean_ioc_str = str(primary_ioc_str).strip()
+    
     final_data = {}
     all_sources = set()
     all_errors = []
@@ -64,14 +80,18 @@ def merge_api_results(
     primary_results = []
     pivoted_results = []
     for tup in api_tuples:
+        # Validate tuple structure
+        if not isinstance(tup, tuple) or len(tup) < 5:
+            print(f"WARNING: Invalid tuple in api_tuples: {tup}")
+            continue
+            
         # tup[0] is the ioc value from that specific API call
-        if tup[0] == primary_ioc_str:
+        if tup[0] == clean_ioc_str:
             primary_results.append(tup)
         else:
             pivoted_results.append(tup)
 
     # --- Step 1: Layer all pivoted data first to form a base ---
-
     for _, _, data_dict, sources, err in pivoted_results:
         if data_dict:
             final_data.update(data_dict)
@@ -81,7 +101,6 @@ def merge_api_results(
             all_errors.append(err)
 
     # --- Step 2: Layer primary data on top ---
-
     primary_ioc_type = None
     for _, ioc_type, data_dict, sources, err in primary_results:
         if ioc_type:
@@ -99,8 +118,8 @@ def merge_api_results(
     final_error_str = " | ".join(all_errors) if all_errors else None
 
     return (
-        primary_ioc_str,
-        primary_ioc_type,
+        clean_ioc_str, 
+        primary_ioc_type or "unknown",
         final_data,
         sorted(list(all_sources)),
         final_error_str,

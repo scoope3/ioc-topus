@@ -99,7 +99,27 @@ def build_gui():
     # ------------------------------------------------------------------------
     # 4) DEFINE HELPER / UTILITY FUNCTIONS
     #    
-    # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------  
+
+    def clean_ioc_for_display(ioc_value):
+        """Ensures IOC value is clean for display"""
+        if not ioc_value:
+            return "Unknown"
+        
+        ioc_str = str(ioc_value)
+        
+        # If it contains data structure elements, it's wrong
+        if any(x in ioc_str for x in ['{', '[', '"reputation"', '"http_response"']):
+            # Try to extract a URL
+            import re
+            url_match = re.search(r'https?://[^\s\'"{}]+', ioc_str)
+            if url_match:
+                return url_match.group(0)
+            return "Invalid IOC"
+        
+        return ioc_str
+
+
     def show_match_data_popup(title, match_data_list):
         """Creates a popup window to display signature match details."""
         popup = tk.Toplevel()
@@ -367,6 +387,7 @@ def build_gui():
             else:
                 return (None, f"urlscan poll error {resp.status_code}: {resp.text}")
 
+
     def submit_indicator_logic_robust(ioc_value, mode, submit_to_vt, submit_to_us, visibility, results_q):
         """
         1) Submits the IOC (URL or file) to VirusTotal if checked.
@@ -375,9 +396,32 @@ def build_gui():
         4) Then calls the existing process_iocs([ioc_value]) to do the "final" GET.
         5) Puts final result in 'results_q' as (ioc, ioc_type, parsed_data, sources, error_str).
         """
+        # Store the original IOC value before any modifications
+        original_ioc_value = str(ioc_value).strip()
+        new_sha256 = None  # Track SHA256 for file submissions
+        
         vt_err = None
         us_err = None
 
+        # Check if it's only a domain submitted as URL
+        actual_mode = mode
+        if actual_mode == "url":
+            # Check if it's only a domain (no protocol, no path)
+            if not re.match(r"^https?://", ioc_value, re.IGNORECASE):
+                # It's likely a domain or domain with port, add protocol
+                if "/" not in ioc_value or (ioc_value.count("/") == 1 and ioc_value.endswith("/")):
+                    # Check if it looks like a domain
+                    domain_pattern = r"^(?!-)[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.?[A-Za-z]{0,}(:[0-9]+)?/?$"
+                    if re.match(domain_pattern, ioc_value):
+                        # Remove trailing slash if present
+                        ioc_value = ioc_value.rstrip("/")
+                        # Add protocol
+                        if ":" in ioc_value and not ioc_value.startswith("http"):
+                            # Has port
+                            ioc_value = f"http://{ioc_value}"
+                        else:
+                            ioc_value = f"http://{ioc_value}"
+                            
         # ----------------------------------
         # 1) VIRUSTOTAL SUBMISSION
         # ----------------------------------
@@ -422,7 +466,6 @@ def build_gui():
                             if poll_err:
                                 vt_err = poll_err
                             else:
-                                # <-- This is the CRITICAL step:
                                 try:
                                     new_sha256 = final_json["meta"]["file_info"]["sha256"]
                                     ioc_value = new_sha256  # reassign the IOC to the actual SHA-256
@@ -448,7 +491,12 @@ def build_gui():
                         "API-Key": config.URLSCAN_API_KEY,
                         "Content-Type": "application/json"
                     }
-                    body = {"url": ioc_value, "visibility": visibility}
+                    # Ensure the URL is properly formatted for URLScan
+                    submit_url = ioc_value
+                    if not re.match(r"^https?://", submit_url, re.IGNORECASE):
+                        submit_url = f"http://{submit_url}"
+                        
+                    body = {"url": submit_url, "visibility": visibility}
                     resp = requests.post(urlscan_url, headers=headers_us, json=body)
 
                     if resp.status_code in (200, 201):
@@ -458,12 +506,22 @@ def build_gui():
                         if poll_err:
                             us_err = poll_err
                     else:
-                        us_err = f"urlscan submission error {resp.status_code}: {resp.text}"
+                        # Parse the error response for better error messages
+                        try:
+                            error_data = resp.json()
+                            if "message" in error_data:
+                                us_err = f"urlscan error: {error_data['message']}"
+                            else:
+                                us_err = f"urlscan submission error {resp.status_code}: {resp.text}"
+                        except:
+                            us_err = f"urlscan submission error {resp.status_code}: {resp.text}"
+                            
                 except Exception as ex:
                     us_err = f"Error submitting to urlscan: {ex}"
             else: # mode == "file" - urlscan submission is only for URLs
                 pass
 
+        # Continue with the rest of the function...
         def do_final_lookup():
             all_errors = []
             if vt_err:
@@ -472,15 +530,19 @@ def build_gui():
                 all_errors.append(f"urlscan submission error: {us_err}")
             final_err = " | ".join(all_errors) if all_errors else None
 
+            # Determine which IOC to use for the final lookup
+            final_ioc_to_query = ioc_value  # This might be the SHA256 for files
+            
+            # For file submissions, validate we have a proper SHA256
             if mode == "file" and not re.match(r"^[a-fA-F0-9]{64}$", ioc_value):
-                results_q.put((ioc_value, "file", {"file_submitted": True}, [], final_err))
+                results_q.put((original_ioc_value, "file", {"file_submitted": True}, [], final_err))
                 return
 
-            if ioc_value in response_cache:
-                del response_cache[ioc_value]
+            if final_ioc_to_query in response_cache:
+                del response_cache[final_ioc_to_query]
 
             qlocal = queue.Queue()
-            process_iocs([ioc_value], qlocal)
+            process_iocs([final_ioc_to_query], qlocal)
             final_result = qlocal.get()
 
             if len(final_result) == 5:
@@ -488,6 +550,14 @@ def build_gui():
             else:
                 ioc_final, itype_final, parsed_data, sources_final = final_result
                 err_final = None
+
+            if isinstance(ioc_final, dict) or any(x in str(ioc_final) for x in ['{', '"http_response_data"', '"reputation"']):
+                print(f"ERROR: Submission corrupted IOC to: {ioc_final}")
+                # For files, use the SHA256 if we have it, otherwise use original
+                if mode == "file" and new_sha256:
+                    ioc_final = new_sha256
+                else:
+                    ioc_final = original_ioc_value
 
             if err_final:
                 if final_err:
@@ -541,7 +611,7 @@ def build_gui():
         )
         mode_frame.pack(fill="x", expand=True, pady=(0, 10))
 
-        rb_url = ttk.Radiobutton(mode_frame, text="Single URL", variable=mode_var, value="url")
+        rb_url = ttk.Radiobutton(mode_frame, text="Single Domain/URL", variable=mode_var, value="url")
         rb_url.grid(row=0, column=0, padx=10, pady=10, sticky="w")
         rb_file = ttk.Radiobutton(mode_frame, text="Single File", variable=mode_var, value="file")
         rb_file.grid(row=0, column=1, padx=10, pady=10, sticky="w")
@@ -694,7 +764,7 @@ def build_gui():
                     daemon=True
                 ).start()
                 progress_bar.start(10)
-                status_bar.config(text="Submitting single URL for analysis...")
+                status_bar.config(text="Submitting single Domain/URL for analysis...")
                 root.after(100, check_submit_results, results_q)
 
             elif submission_type == "file":
@@ -774,8 +844,12 @@ def build_gui():
         one result is expected => show the new row, or error, etc.
         """
         try:
-
             result = results_queue.get_nowait()
+
+            # Debug logging
+            print(f"DEBUG check_submit_results: result type={type(result)}, len={len(result)}")
+            if len(result) > 0:
+                print(f"DEBUG: result[0] = {result[0]}, type={type(result[0])}")
 
             # result should be either (ioc_str, ioc_type, parsed_data, sources, error)
             # or (ioc_str, ioc_type, parsed_data, sources) if no error
@@ -785,14 +859,46 @@ def build_gui():
                 ioc_str, ioc_type, parsed_data, sources = result
                 error = None
 
+            # Ensure ioc_str is a string
+            if isinstance(ioc_str, dict):
+                # This shouldn't happen, but handle it gracefully
+                print(f"ERROR: ioc_str is a dict: {ioc_str}")
+                if 'url' in ioc_str:
+                    ioc_str = ioc_str['url']
+                elif 'value' in ioc_str:
+                    ioc_str = ioc_str['value']
+                else:
+                    ioc_str = str(ioc_str.get('url', ioc_str.get('value', 'Unknown')))
+            
+            ioc_str = str(ioc_str).strip()  # Force to string
+            
+            # Check for JSON/dict contamination in the string
+            if any(x in ioc_str for x in ['{', '[', '"http_response_data"', '"reputation"', 'Last Final URL']):
+                print(f"ERROR: Submission IOC contains JSON/dict elements: {ioc_str[:100]}...")
+                # Try to extract URL from the contaminated string
+                import re
+                url_match = re.search(r'https?://[^\s\'"{}]+', ioc_str)
+                if url_match:
+                    ioc_str = url_match.group(0)
+                    print(f"Extracted clean URL: {ioc_str}")
+                else:
+                    # Try to extract SHA256 if it's a file
+                    sha_match = re.search(r'[a-fA-F0-9]{64}', ioc_str)
+                    if sha_match:
+                        ioc_str = sha_match.group(0)
+                        print(f"Extracted SHA256: {ioc_str}")
+                    else:
+                        print(f"Could not extract clean IOC from: {ioc_str}")
+                        ioc_str = "Invalid IOC"
+
+            progress_bar.stop()
+
             if error:
-                # Display the error as a popup, so the main UI is not blocked by a large text widget
+                # Display the error as a popup
                 messagebox.showerror("Error", error)
-                #status_bar.config(text=f"Error: {error}")
-                progress_bar.stop()
             else:
-                # If success, store the parsed_data in our response_cache + add a row in the Treeview
-                if parsed_data:
+                # If success, store the parsed_data in our response_cache
+                if parsed_data and ioc_str and ioc_str != "Invalid IOC":  # Ensure we have a valid string key
                     response_cache[ioc_str] = {
                         "type": ioc_type,
                         "sources": sources,
@@ -813,8 +919,11 @@ def build_gui():
                     status_bar.config(text=f"Submitted scan results for '{ioc_str}'.")
                     messagebox.showinfo("Submission Completed", f"The scan for '{ioc_str}' is complete.")
                 else:
-                    messagebox.showinfo("Submission Completed", f"The scan for '{ioc_str}' returned no data.")
-                progress_bar.stop()
+                    if ioc_str == "Invalid IOC":
+                        messagebox.showwarning("Submission Issue", 
+                            "The submission completed but the IOC format was corrupted. Please try searching for the IOC manually.")
+                    else:
+                        messagebox.showinfo("Submission Completed", f"The scan returned no data.")
 
         except queue.Empty:
             # No result yet => check again in 100ms
@@ -888,14 +997,12 @@ def build_gui():
                 if keys_to_persist:
                     persist_api_keys(**keys_to_persist)
                     
-                    # --- FIX: ADD THIS SECTION ---
                     # After saving new keys, we must clear the old, "stale"
                     # API clients from the processor. This forces the app to
                     # create new clients with the correct keys on the next API call.
                     _proc._VT_CLIENT = None
                     _proc._US_CLIENT = None
                     _proc._VA_CLIENT = None
-                    # --- END FIX ---
 
                     messagebox.showinfo(
                         "Success", "API keys have been encrypted and saved.", parent=popup
@@ -1095,20 +1202,117 @@ def build_gui():
         except Exception as e:
             messagebox.showerror("Error", f"Failed retrieving DOM: {e}")
 
+    def search_single_api(ioc_str, use_vt=False, use_us=False, use_validin=False):
+        """
+        Search a single API for the given IOC.
+        """
+        try:
+            ioc_type_ = validate_ioc(ioc_str)
+        except ValueError:
+            messagebox.showerror("Error", f"'{ioc_str}' is not a valid IOC format.")
+            return
+
+        api_name = ""
+        if use_vt:
+            api_name = "VirusTotal"
+        elif use_us:
+            api_name = "URLScan.io"
+        elif use_validin:
+            api_name = "Validin"
+
+        local_q = queue.Queue()
+
+        def worker():
+            process_iocs_with_selective_apis(
+                ioc_iterable=[ioc_str],
+                use_vt=use_vt,
+                use_us=use_us,
+                use_validin=use_validin,
+                results_queue=local_q
+            )
+
+        t = threading.Thread(target=worker)
+        t.start()
+
+        def check_results():
+            try:
+                result = local_q.get_nowait()
+                
+                # Debug logging
+                print(f"DEBUG check_results: received result type={type(result)}, len={len(result)}")
+                if len(result) > 0:
+                    print(f"DEBUG: result[0] (IOC) = {result[0]}, type={type(result[0])}")
+                
+                # Process result
+                if len(result) == 5:
+                    found_ioc, found_type, found_data, found_srcs, found_err = result
+                else:
+                    found_ioc, found_type, found_data, found_srcs = result
+                    found_err = None
+
+                # Validate and clean the IOC
+                if isinstance(found_ioc, dict):
+                    print(f"ERROR: found_ioc is a dict: {found_ioc}")
+                    # Try to extract the actual IOC from the dict
+                    if 'url' in found_ioc:
+                        found_ioc = found_ioc['url']
+                    elif 'value' in found_ioc:
+                        found_ioc = found_ioc['value']
+                    else:
+                        found_ioc = str(ioc_str)  # Fall back to original
+                
+                # Ensure it's a string
+                found_ioc = str(found_ioc).strip()
+                
+                # Check if it contains JSON/dict elements
+                if any(x in found_ioc for x in ['{', '[', '"reputation"', '"http_response"', 'Last Final URL']):
+                    print(f"ERROR: IOC contains data structure elements: {found_ioc[:100]}...")
+                    # This is wrong - use the original ioc_str instead
+                    found_ioc = ioc_str
+
+                progress_bar.stop()
+
+                if found_err:
+                    messagebox.showerror("Error", found_err)
+                    status_bar.config(text=f"Error from {api_name}: {found_err}")
+                    return
+
+                if found_data:
+                    response_cache[found_ioc] = {
+                        "type": found_type,
+                        "sources": found_srcs,
+                        "data": found_data
+                    }
+                    new_item = tree.insert("", "end",
+                                        values=(found_ioc, ", ".join(found_srcs)))
+                    vm = found_data.get("vendors_marked_malicious")
+                    if vm and "/" in vm:
+                        left, right = vm.split("/")
+                        try:
+                            if int(left) > 0:
+                                tree.item(new_item, tags=("malicious",))
+                        except:
+                            pass
+                    status_bar.config(text=f"{api_name} search: Inserted '{found_ioc}'.")
+                else:
+                    messagebox.showinfo("Search Result", f"No data returned for '{ioc_str}' from {api_name}.")
+
+            except queue.Empty:
+                root.after(100, check_results)
+                return
+
+        progress_bar.start(10)
+        status_bar.config(text=f"Searching {api_name} for '{ioc_str}' ...")
+        root.after(100, check_results)
 
     def bind_treeview_right_click_menu(tv: ttk.Treeview):
         """
-        Binds a right-click context menu to 'tv' with these items:
-         - Copy Indicator
-         - A 'Search' cascade containing:
-               [Search All APIs]
-               [Hunt - Resource Hash (urlscan - external redirect)]
-               [Collect - Website DOM]
-               [Collect - Website Screenshot]
+        Binds an enhanced right-click context menu to 'tv' with improved organization
+        and granular API control.
         """
-
         menu = tk.Menu(tv, tearoff=0)
         selected_cell_value = [None]
+        selected_row_values = [None]
 
         def do_popup(event):
             row_id = tv.identify_row(event.y)
@@ -1121,6 +1325,7 @@ def build_gui():
 
             column_index = int(col_id.replace('#','')) - 1
             row_values = tv.item(row_id, "values")
+            selected_row_values[0] = row_values
 
             if 0 <= column_index < len(row_values):
                 cell_val = row_values[column_index]
@@ -1128,10 +1333,62 @@ def build_gui():
                 cell_val = None
 
             selected_cell_value[0] = cell_val
+            
+            # Clear the menu and rebuild it
+            menu.delete(0, tk.END)
+            build_menu()
+            
             menu.post(event.x_root, event.y_root)
 
         tv.bind("<Button-3>", do_popup)
 
+        def build_menu():
+            # Basic copy operations
+            menu.add_command(label="Copy Indicator", command=copy_indicator)
+            menu.add_command(label="Copy Row", command=copy_row)
+            menu.add_separator()
+            
+            # Search APIs submenu
+            search_menu = tk.Menu(menu, tearoff=0)
+            search_menu.add_command(label="Search All Available APIs", command=search_all_apis_command)
+            search_menu.add_separator()
+            search_menu.add_command(label="VirusTotal", command=search_virustotal_only)
+            search_menu.add_command(label="URLScan.io", command=search_urlscan_only)
+            search_menu.add_command(label="Validin", command=search_validin_only)
+            menu.add_cascade(label="Search APIs", menu=search_menu)
+            
+            # Pivot submenu
+            pivot_menu = tk.Menu(menu, tearoff=0)
+            pivot_menu.add_command(label="Hunt Resource Hash (URLScan)", command=pivot_resource_hash_command)
+            
+            # Validin hash category submenu
+            validin_hash_menu = tk.Menu(pivot_menu, tearoff=0)
+            validin_hash_menu.add_command(label="JARM", command=lambda: search_validin_hash_category("JARM"))
+            validin_hash_menu.add_command(label="Certificate SHA256", command=lambda: search_validin_hash_category("CERT_FINGERPRINT_SHA256"))
+            validin_hash_menu.add_command(label="Body SHA1", command=lambda: search_validin_hash_category("BODY_SHA1"))
+            validin_hash_menu.add_command(label="Header Hash", command=lambda: search_validin_hash_category("HEADER_HASH"))
+            validin_hash_menu.add_command(label="Banner Hash", command=lambda: search_validin_hash_category("BANNER_0_HASH"))
+            validin_hash_menu.add_command(label="Favicon Hash", command=lambda: search_validin_hash_category("FAVICON_HASH"))
+            pivot_menu.add_cascade(label="Search Hash by Category (Validin)", menu=validin_hash_menu)
+            
+            menu.add_cascade(label="Pivot", menu=pivot_menu)
+            
+            # Collect submenu
+            collect_menu = tk.Menu(menu, tearoff=0)
+            collect_menu.add_command(label="Website Screenshot (URLScan)", command=collect_screenshot_command)
+            collect_menu.add_command(label="Website DOM (URLScan)", command=collect_dom_command)
+            collect_menu.add_command(label="HTTP Response Headers", command=collect_headers_command)
+            menu.add_cascade(label="Collect", menu=collect_menu)
+            
+            # External lookups submenu
+            external_menu = tk.Menu(menu, tearoff=0)
+            external_menu.add_command(label="Google Search", command=google_search_command)
+            external_menu.add_command(label="Shodan", command=shodan_search_command)
+            external_menu.add_command(label="Censys", command=censys_search_command)
+            external_menu.add_command(label="AbuseIPDB", command=abuseipdb_search_command)
+            menu.add_cascade(label="External Lookups", menu=external_menu)
+
+        # Command implementations
         def copy_indicator():
             val = selected_cell_value[0]
             if not val:
@@ -1139,10 +1396,13 @@ def build_gui():
             tv.clipboard_clear()
             tv.clipboard_append(val)
 
-        menu.add_command(label="Copy Indicator", command=copy_indicator)
-
-        #  (C) "Search" submenu
-        search_menu = tk.Menu(menu, tearoff=0)
+        def copy_row():
+            vals = selected_row_values[0]
+            if not vals:
+                return
+            row_text = "\t".join(str(v) for v in vals)
+            tv.clipboard_clear()
+            tv.clipboard_append(row_text)
 
         def search_all_apis_command():
             val = selected_cell_value[0]
@@ -1150,7 +1410,23 @@ def build_gui():
                 return
             pivot_single_ioc_for_all_apis(val)
 
-        search_menu.add_command(label="Search All APIs", command=search_all_apis_command)
+        def search_virustotal_only():
+            val = selected_cell_value[0]
+            if not val:
+                return
+            search_single_api(val, use_vt=True, use_us=False, use_validin=False)
+
+        def search_urlscan_only():
+            val = selected_cell_value[0]
+            if not val:
+                return
+            search_single_api(val, use_vt=False, use_us=True, use_validin=False)
+
+        def search_validin_only():
+            val = selected_cell_value[0]
+            if not val:
+                return
+            search_single_api(val, use_vt=False, use_us=False, use_validin=True)
 
         def pivot_resource_hash_command():
             val = selected_cell_value[0]
@@ -1158,37 +1434,67 @@ def build_gui():
                 return
             pivot_resource_hash(val)
 
-        search_menu.add_command(
-            label="Hunt - Resource Hash (urlscan - external redirect)",
-            command=pivot_resource_hash_command
-        )
-
-        def collect_dom_command():
+        def search_validin_hash_category(category):
             val = selected_cell_value[0]
             if not val:
                 return
-
-            if not re.match(r'^[0-9a-fA-F-]{36}$', val):
-                messagebox.showerror("Error", f"'{val}' doesn't look like a urlscan scan ID.")
-                return
-
-            open_dom_popup(val)
-
-        search_menu.add_command(label="Collect - Website DOM", command=collect_dom_command)
+            # This would use the category-specific endpoint
+            messagebox.showinfo("Hash Category Search", 
+                f"Searching Validin for {category} hash: {val}\n(Not implemented yet)")
 
         def collect_screenshot_command():
             val = selected_cell_value[0]
             if not val:
                 return
-
             if not re.match(r'^[0-9a-fA-F-]{36}$', val):
                 messagebox.showerror("Error", f"'{val}' doesn't look like a urlscan scan ID.")
                 return
-
             open_screenshot_popup(val)
 
-        search_menu.add_command(label="Collect - Website Screenshot", command=collect_screenshot_command)
-        menu.add_cascade(label="Search", menu=search_menu)
+        def collect_dom_command():
+            val = selected_cell_value[0]
+            if not val:
+                return
+            if not re.match(r'^[0-9a-fA-F-]{36}$', val):
+                messagebox.showerror("Error", f"'{val}' doesn't look like a urlscan scan ID.")
+                return
+            open_dom_popup(val)
+
+        def collect_headers_command():
+            val = selected_cell_value[0]
+            if not val:
+                return
+            messagebox.showinfo("Collect Headers", f"Collecting headers for: {val}\n(Not implemented yet)")
+
+        def google_search_command():
+            val = selected_cell_value[0]
+            if not val:
+                return
+            import urllib.parse
+            webbrowser.open(f"https://www.google.com/search?q={urllib.parse.quote(val)}")
+
+        def shodan_search_command():
+            val = selected_cell_value[0]
+            if not val:
+                return
+            webbrowser.open(f"https://www.shodan.io/search?query={val}")
+
+        def censys_search_command():
+            val = selected_cell_value[0]
+            if not val:
+                return
+            webbrowser.open(f"https://search.censys.io/search?resource=hosts&q={val}")
+
+        def abuseipdb_search_command():
+            val = selected_cell_value[0]
+            if not val:
+                return
+            # Check if it's an IP
+            ip_re = r"^(?:\d{1,3}\.){3}\d{1,3}$"
+            if re.match(ip_re, val):
+                webbrowser.open(f"https://www.abuseipdb.com/check/{val}")
+            else:
+                messagebox.showinfo("Info", "AbuseIPDB only supports IP address lookups")
 
     def reorder_sources(sources_list):
         """
@@ -1222,8 +1528,8 @@ def build_gui():
     def pivot_single_ioc_for_all_apis(ioc_str):
         """
         1) Validate the ioc_str,
-        2) spawn a background thread that calls 'process_iocs([ioc_str])',
-        3) parse results and insert into the tree.
+        2) spawn a background thread that calls process_iocs_with_selective_apis,
+        3) parse results and insert into the tree with proper error handling.
         """
         try:
             ioc_type_ = validate_ioc(ioc_str)
@@ -1234,61 +1540,110 @@ def build_gui():
         local_q = queue.Queue()
 
         def worker():
-            # Call the function that handles selective APIs, setting all to True
+            # Use the same selective API processing that handles errors gracefully
             process_iocs_with_selective_apis(
-                ioc_iterable=[ioc_str], # CHANGED from ioc_list
+                ioc_iterable=[ioc_str],
                 use_vt=True,
                 use_us=True,
-                use_validin=True, 
+                use_validin=(ioc_type_ in ("domain", "ip_address", "fingerprint_hash")),
                 results_queue=local_q
             )
 
         t = threading.Thread(target=worker)
         t.start()
 
-        def check_results():
-            try:
-                result = local_q.get_nowait()
-                if len(result) == 5:
-                    found_ioc, found_type, found_data, found_srcs, found_err = result
-                else:
-                    found_ioc, found_type, found_data, found_srcs = result
-                    found_err = None
-
-                progress_bar.stop()
-
-                if found_err:
-                    messagebox.showerror("Error", found_err)
-                    status_bar.config(text=f"Error from pivot: {found_err}")
-                    return
-
-                if found_data:
-                    response_cache[found_ioc] = {
-                        "type": found_type,
-                        "sources": found_srcs,
-                        "data": found_data
-                    }
-                    new_item = tree.insert("", "end",
-                                           values=(found_ioc, ", ".join(found_srcs)))
-                    vm = found_data.get("vendors_marked_malicious")
-                    if vm and "/" in vm:
-                        left, right = vm.split("/")
-                        try:
-                            if int(left) > 0:
-                                tree.item(new_item, tags=("malicious",))
-                        except:
-                            pass
-                    status_bar.config(text=f"Search All APIs: Inserted '{found_ioc}'.")
-                else:
-                    messagebox.showinfo("Pivot", f"No data returned for '{ioc_str}' from 'Search All APIs'.")
-
-            except queue.Empty:
-                root.after(100, check_results)
-                return
-
+        # Use the same check_results function that handles partial results
         progress_bar.start(10)
         status_bar.config(text=f"Searching all APIs for '{ioc_str}' ...")
-        root.after(100, check_results)
+        root.after(100, lambda: check_results_with_context(local_q, "Search All APIs"))
+
+    def check_results_with_context(results_queue, context="Search"):
+        """
+        Modified check_results that includes context in messages
+        """
+        try:
+            result = results_queue.get_nowait()
+        except queue.Empty:
+            root.after(100, check_results_with_context, results_queue, context)
+            return
+
+        # Parse the tuple
+        if len(result) == 5:
+            ioc_, ioc_type_, parsed_data, sources_, error_ = result
+        else:
+            ioc_, ioc_type_, parsed_data, sources_ = result
+            error_ = None
+
+        # Check if we have data despite errors
+        has_data = bool(parsed_data)
+        has_errors = bool(error_)
+        
+        if has_data:
+            # Add to cache and tree
+            response_cache[ioc_] = {
+                "type": ioc_type_,
+                "sources": sources_,
+                "data": parsed_data
+            }
+
+            malicious_count = 0
+            vm = parsed_data.get("vendors_marked_malicious") if parsed_data else None
+            if vm and isinstance(vm, str) and "/" in vm:
+                try:
+                    left, right = vm.split("/")
+                    malicious_count = int(left)
+                except:
+                    pass
+
+            sources_ = reorder_sources(sources_)
+            joined_sources = ", ".join(sources_)
+            new_item = tree.insert("", "end", values=(ioc_, joined_sources))
+            if malicious_count > 0:
+                tree.item(new_item, tags=("malicious",))
+
+            # Update row colors
+            children = tree.get_children()
+            for idx, item_id in enumerate(children):
+                tag = "oddrow" if (idx % 2) else "evenrow"
+                existing_tags = tree.item(item_id, "tags")
+                if "malicious" in existing_tags:
+                    tree.item(item_id, tags=(tag, "malicious"))
+                else:
+                    tree.item(item_id, tags=(tag,))
+
+            if has_errors:
+                # Parse which APIs failed
+                failed_apis = []
+                if "VirusTotal Error:" in error_ or "VT quota exceeded" in error_:
+                    failed_apis.append("VirusTotal")
+                if "urlscan" in error_.lower():
+                    failed_apis.append("URLScan.io")
+                if "validin" in error_.lower():
+                    failed_apis.append("Validin")
+                
+                if not failed_apis and error_:
+                    failed_apis.append("Unknown API")
+                
+                failed_str = ", ".join(failed_apis) if failed_apis else "some APIs"
+                status_bar.config(text=f"{context}: '{ioc_}' added (partial results - {failed_str} unavailable)")
+                
+                messagebox.showinfo(
+                    f"{context} - Partial Results", 
+                    f"{context} completed with partial results for '{ioc_}'.\n\n"
+                    f"The following APIs were unavailable:\n{chr(10).join('• ' + api for api in failed_apis)}\n\n"
+                    "Results from available APIs have been added."
+                )
+            else:
+                status_bar.config(text=f"{context}: '{ioc_}' added successfully.")
+        else:
+            if has_errors:
+                messagebox.showerror(f"{context} Failed", f"No results found for '{ioc_}'.\n\nErrors:\n{error_}")
+                status_bar.config(text=f"{context} failed for '{ioc_}'")
+            else:
+                messagebox.showinfo("No Results", f"No data found for IOC '{ioc_}' in any API.")
+                status_bar.config(text=f"No results found for '{ioc_}'")
+        
+        progress_bar.stop()
 
     def check_results(results_queue):
         """
@@ -1312,19 +1667,18 @@ def build_gui():
             ioc_, ioc_type_, parsed_data, sources_ = result
             error_ = None
 
-        # 3) If there is an error, show it gracefully
-        if error_:
-            messagebox.showerror("Error", f"IOC '{ioc_}': {error_}")
-            #status_bar.config(text=f"Error: {error_}")
-            progress_bar.stop()
-        else:
-            # 4) Normal success path
-            if parsed_data:
-                response_cache[ioc_] = {
-                    "type": ioc_type_,
-                    "sources": sources_,
-                    "data": parsed_data
-                }
+        # 3) NCheck if we have data despite errors
+        has_data = bool(parsed_data)
+        has_errors = bool(error_)
+        
+        # 4) Handle different scenarios
+        if has_data:
+            # We have data, so add it to the tree regardless of errors
+            response_cache[ioc_] = {
+                "type": ioc_type_,
+                "sources": sources_,
+                "data": parsed_data
+            }
 
             malicious_count = 0
             vm = parsed_data.get("vendors_marked_malicious") if parsed_data else None
@@ -1351,14 +1705,53 @@ def build_gui():
                 else:
                     tree.item(item_id, tags=(tag,))
 
-            status_bar.config(text=f"IOC '{ioc_}' added successfully.")
+            # Show appropriate status message
+            if has_errors:
+                # We have data but some APIs failed - show warning
+                # Parse the error to extract which APIs failed
+                failed_apis = []
+                if "VirusTotal Error:" in error_ or "VT quota exceeded" in error_:
+                    failed_apis.append("VirusTotal")
+                if "urlscan.io Error:" in error_ or "urlscan" in error_.lower():
+                    failed_apis.append("URLScan.io")
+                if "Validin Error:" in error_ or "validin" in error_.lower():
+                    failed_apis.append("Validin")
+                
+                # If we couldn't parse specific APIs, show generic message
+                if not failed_apis and error_:
+                    failed_apis.append("Unknown API")
+                
+                failed_str = ", ".join(failed_apis) if failed_apis else "some APIs"
+                status_bar.config(text=f"IOC '{ioc_}' added (partial results - {failed_str} unavailable)")
+                
+                # Show info message about partial results
+                messagebox.showinfo(
+                    "Partial Results", 
+                    f"Search completed with partial results for '{ioc_}'.\n\n"
+                    f"The following APIs were unavailable:\n{chr(10).join('• ' + api for api in failed_apis)}\n\n"
+                    "Results from available APIs have been added."
+                )
+            else:
+                # Complete success
+                status_bar.config(text=f"IOC '{ioc_}' added successfully.")
+        
+        else:
+            # No data at all
+            if has_errors:
+                # Show error since we got nothing
+                messagebox.showerror("Search Failed", f"No results found for '{ioc_}'.\n\nErrors:\n{error_}")
+                status_bar.config(text=f"Search failed for '{ioc_}'")
+            else:
+                # No data and no errors - IOC not found
+                messagebox.showinfo("No Results", f"No data found for IOC '{ioc_}' in any of the selected APIs.")
+                status_bar.config(text=f"No results found for '{ioc_}'")
+        
+        # 5) Stop progress bar
+        progress_bar.stop()
 
-        # 5) Check if the queue is still non-empty => keep draining
+        # 6) Check if the queue is still non-empty => keep draining
         if not results_queue.empty():
             root.after(100, check_results, results_queue)
-        else:
-            # If the queue is finally empty, stop the spinner
-            progress_bar.stop()
 
 
             
@@ -1413,8 +1806,7 @@ def build_gui():
 
                 if err:
                     # Show the error in a popup
-                    messagebox.showerror("Error Processing Submission", f"IOC '{ioc_str}': {err}")
-                    # status_bar.config(text=f"Error submitting '{ioc_str}': {err}")
+                    messagebox.showerror("Error Processing Submission", f"IOC '{clean_ioc_for_display(ioc_str)}': {err}")
                 else:
                     # If success, add to the main Treeview
                     if parsed_data: 
@@ -1437,13 +1829,13 @@ def build_gui():
                                     tree.item(new_item, tags=("malicious",))
                             except ValueError: # Handle case where split parts aren't ints
                                 pass
-                        status_bar.config(text=f"Submitted '{ioc_str}' successfully and added to results.")
+                        status_bar.config(text=f"Submitted '{clean_ioc_for_display(ioc_str)}' successfully and added to results.")
                     else:
                         # If no actual data was parsed, but no error string, it could be an IOC not found
                         # or a submission that yielded no new info. Add to tree with fewer details.
                         ordered_sources = reorder_sources(sources)
                         tree.insert("", "end", values=(ioc_str, ", ".join(ordered_sources))) # Add even if no parsed_data to show it was processed
-                        status_bar.config(text=f"Submission for '{ioc_str}' processed; no new data or already cached.")
+                        status_bar.config(text=f"Submission for '{clean_ioc_for_display(ioc_str)}' processed; no new data or already cached.")
 
 
                 # Re-stripe row colors after each insertion
@@ -1589,22 +1981,55 @@ def build_gui():
         
         tk.Checkbutton(api_checkbox_frame, text="VirusTotal", variable=vt_var, bg="#F0F0F0", font=FONT_LABEL).pack(side="left", padx=10)
         tk.Checkbutton(api_checkbox_frame, text="urlscan.io", variable=us_var, bg="#F0F0F0", font=FONT_LABEL).pack(side="left", padx=10)
-        tk.Checkbutton(api_checkbox_frame, text="Validin (Domain/IP)", variable=val_var, bg="#F0F0F0", font=FONT_LABEL).pack(side="left", padx=10)
+        tk.Checkbutton(api_checkbox_frame, text="Validin (Domain/IP/Response Hashes)", variable=val_var, bg="#F0F0F0", font=FONT_LABEL).pack(side="left", padx=10)
 
         # --- Action Buttons ---
         btn_frame = tk.Frame(container, bg="#F0F0F0")
         btn_frame.pack(fill="x", pady=(20, 0))
 
         def do_search():
-            ioc_str = ioc_var.get().strip(); use_vt = vt_var.get(); use_us = us_var.get(); use_val = val_var.get()
-            if not (use_vt or use_us or use_val): messagebox.showerror("Error", "Select at least one API."); return
-            if not ioc_str: messagebox.showerror("Error", "Please enter an IOC to search."); return
+            ioc_str = ioc_var.get().strip()
+            use_vt = vt_var.get()
+            use_us = us_var.get()
+            use_val = val_var.get()
+            
+            # Add debug print
+            print(f"\nDEBUG Search: IOC='{ioc_str}', VT={use_vt}, US={use_us}, Validin={use_val}")
+            
+            if not (use_vt or use_us or use_val):
+                messagebox.showerror("Error", "Select at least one API.")
+                return
+            if not ioc_str:
+                messagebox.showerror("Error", "Please enter an IOC to search.")
+                return
+            
+            # Validate IOC type to ensure proper API selection
+            try:
+                ioc_type = validate_ioc(ioc_str)
+                print(f"DEBUG: Detected IOC type: {ioc_type}")
+                
+                # For fingerprint hashes, ensure Validin is selected
+                if ioc_type == "fingerprint_hash" and not use_val:
+                    messagebox.showinfo("Info", "Fingerprint hashes are only supported by Validin. Enabling Validin API.")
+                    use_val = True
+            except ValueError as e:
+                messagebox.showerror("Error", str(e))
+                return
+            
             results_q = queue.Queue()
             def worker():
-                process_iocs_with_selective_apis([ioc_str], use_vt=use_vt, use_us=use_us, use_validin=use_val, results_queue=results_q)
+                process_iocs_with_selective_apis(
+                    [ioc_str], 
+                    use_vt=use_vt, 
+                    use_us=use_us, 
+                    use_validin=use_val, 
+                    results_queue=results_q
+                )
             threading.Thread(target=worker, daemon=True).start()
             popup.destroy()
-            progress_bar.start(10); status_bar.config(text=f"Searching '{ioc_str}' ..."); root.after(100, check_results, results_q)
+            progress_bar.start(10)
+            status_bar.config(text=f"Searching '{clean_ioc_for_display(ioc_str)}' ...")
+            root.after(100, check_results, results_q)
 
         search_btn = tk.Button(
             btn_frame, text="Search Now", command=do_search, bg="#6A5ACD", fg="white",
@@ -1630,7 +2055,7 @@ def build_gui():
         )
         lbl_title.pack(pady=(0, 15))
 
-        # --- Your existing File Selection Frame (No changes needed here) ---
+
         file_frame = tk.LabelFrame(container, text="Source File", font=("Segoe UI", 11, "bold"), bg="#F0F0F0", padx=10, pady=10)
         file_frame.pack(fill="x", pady=5)
         tk.Label(file_frame, text="Select a .txt file with one IOC per line:", bg="#F0F0F0", font=FONT_LABEL).pack(anchor="w", pady=(0,5))
@@ -1650,7 +2075,7 @@ def build_gui():
         browse_btn = tk.Button(entry_file_frame, text="Browse...", bg="#9370DB", fg="#FFFFFF", font=FONT_BUTTON, command=browse_file)
         browse_btn.pack(side="left", padx=(5,0))
 
-        # --- Your existing API Selection Frame (No changes needed here) ---
+
         api_frame = tk.LabelFrame(container, text="Data Sources", font=("Segoe UI", 11, "bold"), bg="#F0F0F0", padx=10, pady=10)
         api_frame.pack(fill="x", pady=5)
         api_checkbox_frame = tk.Frame(api_frame, bg="#F0F0F0")
@@ -1662,9 +2087,9 @@ def build_gui():
         
         tk.Checkbutton(api_checkbox_frame, text="VirusTotal", variable=vt_var, bg="#F0F0F0", font=FONT_LABEL).pack(side="left", padx=10)
         tk.Checkbutton(api_checkbox_frame, text="urlscan.io", variable=urlscan_var, bg="#F0F0F0", font=FONT_LABEL).pack(side="left", padx=10)
-        tk.Checkbutton(api_checkbox_frame, text="Validin (Domain/IP)", variable=val_var, bg="#F0F0F0", font=FONT_LABEL).pack(side="left", padx=10)
+        tk.Checkbutton(api_checkbox_frame, text="Validin (Domain/IP/Response Hashes)", variable=val_var, bg="#F0F0F0", font=FONT_LABEL).pack(side="left", padx=10)
 
-        # --- NEW: Delay Slider Frame ---
+
         delay_frame = tk.LabelFrame(container, text="API Rate Limit Delay", font=("Segoe UI", 11, "bold"), bg="#F0F0F0", padx=10, pady=10)
         delay_frame.pack(fill="x", pady=5)
         delay_var = tk.DoubleVar(value=1.0) # Default to 1 second
@@ -1678,7 +2103,7 @@ def build_gui():
             orient="horizontal",
             variable=delay_var,
             resolution=0.1, # Allow for tenths of a second
-            length=200,     # Give it a decent width
+            length=200,     
             bg="#F0F0F0",
             troughcolor='#BDC3C7',
             highlightthickness=0
@@ -1687,13 +2112,11 @@ def build_gui():
         
         current_delay_label = tk.Label(delay_frame, textvariable=delay_var, width=4, bg="#F0F0F0", font=FONT_LABEL)
         current_delay_label.pack(side="left", padx=(5,0))
-        # --- END NEW ---
 
         # --- Action Button ---
         btn_frame = tk.Frame(container, bg="#F0F0F0")
         btn_frame.pack(fill="x", pady=(20, 0))
 
-        # --- This is your do_bulk_search function with one line added ---
         def do_bulk_search():
             chosen_file = file_path_var.get().strip()
             if not chosen_file:
@@ -1708,7 +2131,6 @@ def build_gui():
                 messagebox.showerror("Error", "Select at least one API to use.")
                 return
 
-            # --- ADD THIS LINE: Get the value from the new slider ---
             selected_delay = delay_var.get()
 
             try:
@@ -1736,7 +2158,7 @@ def build_gui():
                     use_us=use_us,
                     use_validin=use_val,
                     results_queue=results_q,
-                    delay_seconds=selected_delay # <-- Pass delay here
+                    delay_seconds=selected_delay 
                 )
 
             t = threading.Thread(target=worker, daemon=True)
@@ -2236,7 +2658,7 @@ def build_gui():
         copy_btn.config(command=copy_all)
 
     def create_ip_traffic_treeview(parent, ip_traffic_list):
-        """Builds a multi-column Treeview for IP traffic with fixed button."""
+        """Builds a multi-column Treeview for IP traffic."""
         tree_container = tk.Frame(parent, bg=parent["bg"])
         tree_container.pack(fill="both", expand=True, pady=5)
         
@@ -2290,7 +2712,7 @@ def build_gui():
         return build_single_column_treeview(parent, call_list, column_label="Highlighted Call")
 
     def create_http_conversations_treeview(parent, http_list):
-        """Builds a multi-column Treeview for HTTP conversations with fixed button."""
+        """Builds a multi-column Treeview for HTTP conversations."""
         tree_container = tk.Frame(parent, bg=parent["bg"])
         tree_container.pack(fill="both", expand=True, pady=5)
 
@@ -2325,7 +2747,7 @@ def build_gui():
         return tv
     
     def create_ja3_treeview(parent, ja3_list):
-        """Builds a single-column Treeview for JA3 digests with fixed button."""
+        """Builds a single-column Treeview for JA3 digests."""
         tree_container = tk.Frame(parent, bg=parent["bg"])
         tree_container.pack(fill="both", expand=True, pady=5)
 
@@ -2612,9 +3034,16 @@ def build_gui():
         )
 
         tv = ttk.Treeview(container, columns=columns, show="headings", height=4)
-        for col in columns:
+        for i, col in enumerate(columns):
             tv.heading(col, text=col, anchor="w")
-            tv.column(col, width=200, anchor="w", stretch=True, minwidth = 200)
+            if col == "Subject Alternative Name":
+                tv.column(col, width=300, anchor="w", stretch=True, minwidth=200)
+            elif col in ["Not Before Cert Date", "Not After Cert Date"]:
+                tv.column(col, width=180, anchor="w", stretch=False, minwidth=150)
+            elif col == "Cert Thumbprint - sha256":
+                tv.column(col, width=400, anchor="w", stretch=False, minwidth=300)
+            else:
+                tv.column(col, width=200, anchor="w", stretch=False, minwidth=150)
 
         key_usage = cert_dict.get("key_usage", "")
         if isinstance(key_usage, list):
@@ -2627,12 +3056,26 @@ def build_gui():
         not_after  = cert_dict.get("not_after", "")
         thumb_sha  = cert_dict.get("thumbprint_sha256", "")
         sub_key_id = cert_dict.get("subject_key_identifier", "")
+        
+        # Handle Subject Alternative Name
         alt_name   = cert_dict.get("subject_alternative_name", "")
+        alt_name_list = []
+        alt_name_display = ""
+        
         if isinstance(alt_name, list):
-            alt_name = ", ".join(alt_name)
+            alt_name_list = alt_name
+            if len(alt_name_list) > 1:
+                alt_name_display = f"[{len(alt_name_list)} names] (double-click)"
+            elif len(alt_name_list) == 1:
+                alt_name_display = alt_name_list[0]
+            else:
+                alt_name_display = ""
+        else:
+            alt_name_display = str(alt_name) if alt_name else ""
+        
         issuer_org = cert_dict.get("issuer_organization", "")
 
-        tv.insert(
+        item_id = tv.insert(
             "",
             "end",
             values=(
@@ -2642,10 +3085,25 @@ def build_gui():
                 not_after,
                 thumb_sha,
                 sub_key_id,
-                alt_name,
+                alt_name_display,
                 issuer_org
             )
         )
+        
+        # Store the full data for popup
+        item_data_map = {}
+        if alt_name_list and len(alt_name_list) > 1:
+            item_data_map[item_id] = {"alt_names": alt_name_list}
+        
+        # Add double-click handler
+        def on_cert_double_click(event):
+            item_id = tv.identify_row(event.y)
+            col_id = tv.identify_column(event.x)
+            
+            if item_id in item_data_map and col_id == "#7":  # Column #7 is Subject Alternative Name
+                show_match_data_popup("Subject Alternative Names", item_data_map[item_id]["alt_names"])
+        
+        tv.bind("<Double-1>", on_cert_double_click)
 
         vsb = ttk.Scrollbar(container, orient="vertical", command=tv.yview)
         tv.configure(yscrollcommand=vsb.set)
@@ -2660,7 +3118,7 @@ def build_gui():
         bind_treeview_right_click_menu(tv)
 
         btn_frame = tk.Frame(container, bg=parent["bg"])
-        btn_frame.pack(side="bottom", anchor="sw", fill="x", pady=(3,0)) # Anchor to bottom-left of the container
+        btn_frame.pack(side="bottom", anchor="sw", fill="x", pady=(3,0))
 
         copy_btn = tk.Button(
             btn_frame,
@@ -2674,7 +3132,10 @@ def build_gui():
         def copy_all_data():
             lines = []
             for child_id in tv.get_children():
-                row_vals = tv.item(child_id, "values")
+                row_vals = list(tv.item(child_id, "values"))
+                # If this is the popup row, expand the alt names
+                if child_id in item_data_map and "alt_names" in item_data_map[child_id]:
+                    row_vals[6] = ", ".join(item_data_map[child_id]["alt_names"])
                 lines.append("\t".join(str(v) for v in row_vals))
             joined_text = "\n".join(lines)
 
@@ -3636,7 +4097,7 @@ def build_gui():
         return tv
 
     def create_registrykeys_opened_treeview(parent, key_list):
-        """Creates a single-column Treeview for opened registry keys with fixed button."""
+        """Creates a single-column Treeview for opened registry keys"""
         tree_container = tk.Frame(parent, bg=parent["bg"])
         tree_container.pack(fill="both", expand=True, pady=5)
 
@@ -3850,7 +4311,7 @@ def build_gui():
         return tv
 
     def create_dns_lookups_treeview(parent, dns_lookups_list):
-        """Creates a 2-column Treeview for DNS lookups with fixed button."""
+        """Creates a 2-column Treeview for DNS lookups."""
         tree_container = tk.Frame(parent, bg=parent["bg"])
         tree_container.pack(fill="both", expand=True, pady=5)
 
@@ -4483,7 +4944,7 @@ def build_gui():
         bind_treeview_right_click_menu(tv)
         return tv
 
-    def group_validin_headers(grouped_dns_data): # <--- Changed parameter name
+    def group_validin_headers(grouped_dns_data):
             """
             Given the pre-processed Validin DNS results (grouped_dns_data, a dict where keys are header names
             and values are JOINED STRINGS), group them into the following 4 categories:
@@ -4759,7 +5220,7 @@ def build_gui():
             ensure_not_empty(ioc_fields_inner)
         # ------------------------------
         # 2) CERTIFICATES tab
-        #    => "last_http_response_headers" from VirusTotal if domain/IP
+        #    => "last_http_response_headers" from VirusTotal if domain/IP/URL
         #    => plus "urlscan HTTP Certs" from st_sections => "urlscan HTTP Response"
         # ------------------------------
         has_cert_data = False
@@ -4845,21 +5306,41 @@ def build_gui():
             if "jarm" in data and data["jarm"]:
                 jarm_lf = tk.LabelFrame(dns_vt_frame, text="JARM Fingerprint", font=("Segoe UI", 11, "bold"), bg=BACKGROUND_COLOR, fg=TEXT_COLOR, padx=10, pady=10)
                 jarm_lf.pack(fill="x", padx=5, pady=5)
-                jarm_copy_btn_container = tk.Frame(jarm_lf, bg=BACKGROUND_COLOR)
-                jarm_copy_btn_container.pack(fill="x", expand=True)
-                create_textbox_with_scroll(jarm_copy_btn_container, data["jarm"], "#FFFFFF", FONT_TREE, 70, 1, include_copy_button=False)
-                jarm_copy_btn = tk.Button(
-                    jarm_copy_btn_container, text="Copy",
+                
+                # Create a simple treeview with one column
+                jarm_container = tk.Frame(jarm_lf, bg=BACKGROUND_COLOR)
+                jarm_container.pack(fill="both", expand=True)
+                
+                jarm_tv = ttk.Treeview(jarm_container, columns=("JARM",), show="headings", height=1)
+                jarm_tv.heading("JARM", text="JARM Fingerprint", anchor="w")
+                jarm_tv.column("JARM", width=600, anchor="w", stretch=True)
+                jarm_tv.insert("", "end", values=(data["jarm"],))
+                
+                # Bind right-click menu
+                bind_treeview_right_click_menu(jarm_tv)
+                
+                # Add scrollbar
+                vsb = ttk.Scrollbar(jarm_container, orient="vertical", command=jarm_tv.yview)
+                jarm_tv.configure(yscrollcommand=vsb.set)
+                vsb.pack(side="right", fill="y")
+                jarm_tv.pack(side="left", fill="both", expand=True)
+                
+                # Copy button
+                btn_frame = tk.Frame(jarm_lf, bg=BACKGROUND_COLOR)
+                btn_frame.pack(side="bottom", anchor="sw", fill="x", pady=(3,0))
+                
+                copy_btn = tk.Button(
+                    btn_frame, text="Copy", bg=BUTTON_COLOR, fg="white", font=FONT_BUTTON,
                     command=lambda: (
                         jarm_lf.clipboard_clear(),
                         jarm_lf.clipboard_append(data["jarm"]),
                         jarm_lf.update(),
-                        jarm_copy_btn.config(text="Copied!"),
-                        jarm_lf.after(2000, lambda: jarm_copy_btn.config(text="Copy"))
-                    ),
-                    bg=BUTTON_COLOR, fg="white", font=FONT_BUTTON
+                        copy_btn.config(text="Copied!"),
+                        jarm_lf.after(2000, lambda: copy_btn.config(text="Copy"))
+                    )
                 )
-                jarm_copy_btn.pack(side="left", anchor="nw", padx=5, pady=(0,5))
+                copy_btn.pack(side="left", padx=5)
+                
                 vt_dns_content_added = True
 
             # Last DNS Records
@@ -5061,7 +5542,7 @@ def build_gui():
         has_web_data = False
 
             # First, create two sub-frames under web_analysis_inner:
-        if ioc_type_ in ("url", "domain", "ip_address"):
+        if ioc_type_ in ("url", "domain", "ip_address", "fingerprint_hash"):
             if ioc_type_ == "url":
                 # --- VirusTotal portion ---
                 vt_web_frame = tk.LabelFrame(
@@ -5244,6 +5725,103 @@ def build_gui():
                 elif 'validin_web_frame' in locals() and validin_web_frame.winfo_exists():
                     validin_web_frame.destroy()
         
+
+            # --- Validin Hash Pivots Section ---
+            raw_validin_hash_data = data.get("validin_hash_pivots", {})
+            pivot_data = raw_validin_hash_data.get("pivot_data", [])
+
+            validin_hash_frame_content_added = False
+            if pivot_data:
+                validin_hash_frame = tk.LabelFrame(
+                    web_analysis_inner,
+                    text="Validin Hash Pivots",
+                    font=("Segoe UI", 12, "bold"),
+                    bg=BACKGROUND_COLOR, fg=TEXT_COLOR, padx=10, pady=10
+                )
+                
+                # Create container for treeview and scrollbars
+                tree_container = tk.Frame(validin_hash_frame, bg=BACKGROUND_COLOR)
+                tree_container.pack(fill="both", expand=True, pady=5)
+                
+                # Create treeview with columns
+                columns = ("Indicator", "Type", "First Seen", "Last Seen")
+                hash_pivot_tv = ttk.Treeview(tree_container, columns=columns, show="headings", height=15)
+                
+                # Configure columns
+                hash_pivot_tv.heading("Indicator", text="Indicator", anchor="w")
+                hash_pivot_tv.heading("Type", text="Type", anchor="w")
+                hash_pivot_tv.heading("First Seen", text="First Seen", anchor="w")
+                hash_pivot_tv.heading("Last Seen", text="Last Seen", anchor="w")
+                
+                hash_pivot_tv.column("Indicator", width=400, anchor="w", stretch=True, minwidth=300)
+                hash_pivot_tv.column("Type", width=100, anchor="w", stretch=False, minwidth=80)
+                hash_pivot_tv.column("First Seen", width=200, anchor="w", stretch=False, minwidth=150)
+                hash_pivot_tv.column("Last Seen", width=200, anchor="w", stretch=False, minwidth=150)
+                
+                # Helper function to convert epoch to readable date
+                def epoch_to_date(epoch_time):
+                    try:
+                        if epoch_time:
+                            return datetime.fromtimestamp(epoch_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                        return ""
+                    except:
+                        return str(epoch_time)
+                
+                # Insert data
+                for pivot in pivot_data:
+                    indicator = pivot.get("indicator", "")
+                    ind_type = pivot.get("indicator_type", "")
+                    first_seen = epoch_to_date(pivot.get("first_seen", 0))
+                    last_seen = epoch_to_date(pivot.get("last_seen", 0))
+                    
+                    hash_pivot_tv.insert("", "end", values=(indicator, ind_type, first_seen, last_seen))
+                
+                # Add scrollbars
+                vsb = ttk.Scrollbar(tree_container, orient="vertical", command=hash_pivot_tv.yview)
+                hash_pivot_tv.configure(yscrollcommand=vsb.set)
+                vsb.pack(side="right", fill="y")
+                
+                hsb = ttk.Scrollbar(tree_container, orient="horizontal", command=hash_pivot_tv.xview)
+                hash_pivot_tv.configure(xscrollcommand=hsb.set)
+                hsb.pack(side="bottom", fill="x")
+                
+                hash_pivot_tv.pack(side="left", fill="both", expand=True)
+                
+                # Bind right-click menu for pivoting
+                bind_treeview_right_click_menu(hash_pivot_tv)
+                
+                # Add Copy All button (on the left, below the treeview)
+                btn_frame = tk.Frame(validin_hash_frame, bg=BACKGROUND_COLOR)
+                btn_frame.pack(side="bottom", anchor="sw", fill="x", pady=(3,0))
+                
+                def copy_all_hash_pivots():
+                    lines = []
+                    lines.append("Indicator\tType\tFirst Seen\tLast Seen")
+                    for child_id in hash_pivot_tv.get_children():
+                        vals = hash_pivot_tv.item(child_id, "values")
+                        lines.append("\t".join(str(v) for v in vals))
+                    joined = "\n".join(lines)
+                    validin_hash_frame.clipboard_clear()
+                    validin_hash_frame.clipboard_append(joined)
+                    validin_hash_frame.update()
+                    copy_btn.config(text="Copied!")
+                    validin_hash_frame.after(2000, lambda: copy_btn.config(text="Copy All"))
+                
+                copy_btn = tk.Button(
+                    btn_frame, text="Copy All", bg="#9370DB", fg="white",
+                    font=("Segoe UI", 10, "bold"), command=copy_all_hash_pivots
+                )
+                copy_btn.pack(side="left", padx=5)
+                
+                validin_hash_frame_content_added = True
+                
+                if validin_hash_frame_content_added:
+                    validin_hash_frame.pack(fill="x", padx=5, pady=10)
+                    has_web_data = True
+                elif 'validin_hash_frame' in locals() and validin_hash_frame.winfo_exists():
+                    validin_hash_frame.destroy()
+
+
         # Final check for Web Analysis tab
         if not has_web_data:
             ensure_not_empty(web_analysis_inner)
