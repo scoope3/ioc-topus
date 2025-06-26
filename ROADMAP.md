@@ -14,9 +14,19 @@ The initial version of IOCTopus establishes a powerful foundation for IOC analys
    -   **VirusTotal**: Comprehensive file, IP, domain, and URL lookups.
    -   **urlscan.io**: Web page analysis, technology fingerprinting, and network request data.
    -   **Validin**: IP and domain intelligence and context.
-   -   **Validin Hash Pivoting**: ✅ Pivot from host responses for fingerprints and hashes (e.g., JARM, certificate hash, banner and other header hashes)
--   **Bulk IOC Processing**: Ability to analyze a list of indicators in a single operation.
--   **CSV Export**: Foundational capability to export collected data.
+   -   **Validin Hash Pivoting**: Pivot from host responses for fingerprints and hashes (e.g., JARM, certificate hash, banner and other header hashes)
+   -   **Domain DNS History**: Track historical DNS records for domains over time
+    -   **Domain OSINT Context**: Gather open-source intelligence context for domains
+    -   **Domain OSINT History**: Historical OSINT data tracking for domains
+    -   **Domain DNS Extra**: Retrieve additional DNS records (MX, TXT, NS, etc.) for domains
+    -   **Domain Crawl History**: Historical web crawl data for domains
+    -   **IP DNS History**: Find all DNS Records (A or AAAA records) observed for an IP address
+    -   **IP DNS Extra**: Find observed extra DNS Records for an IP (HTTPS_FOR, SRV_TARGET_FOR associations)
+    -   **IP OSINT History**: Historical OSINT data for IP addresses
+    -   **IP OSINT Context**: Current OSINT context for IP addresses
+    -   **IP Crawl History**: Historical crawl data associated with IP addresses
+    -   **Bulk IOC Processing**: Ability to analyze a list of indicators in a single operation.
+    -   **CSV Export**: Foundational capability to export collected data.
 
 ---
 
@@ -28,29 +38,11 @@ This is where IOCTopus is headed next with development. The program is organized
 
 The immediate focus is on enriching the existing IOC analysis capabilities.
 
-##### **Next Priority: Validin Deep Intelligence Integration**
-Expand Validin capabilities to provide comprehensive historical and contextual intelligence:
-
-**Domain Intelligence**:
--   **Domain DNS History**: Track historical DNS records for domains over time
--   **Domain OSINT Context**: Gather open-source intelligence context for domains
--   **Domain OSINT History**: Historical OSINT data tracking for domains
--   **Domain DNS Extra**: Retrieve additional DNS records (MX, TXT, NS, etc.) for domains
--   **Domain Registration History**: Track WHOIS/RDAP changes over time
--   **Domain Crawl History**: Historical web crawl data for domains
--   **DNS Reputation Check**: Assess domain reputation based on DNS intelligence
-
-**IP Intelligence**:
--   **IP DNS History**: Find all DNS Records (A or AAAA records) observed for an IP address
--   **IP DNS Extra**: Find observed extra DNS Records for an IP (HTTPS_FOR, SRV_TARGET_FOR associations)
--   **IP OSINT History**: Historical OSINT data for IP addresses
--   **IP OSINT Context**: Current OSINT context for IP addresses
--   **IP Reputation Check**: Assess IP reputation based on multiple factors
--   **IP Crawl History**: Historical crawl data associated with IP addresses
+##### **Next Priority: Allow user to select from specific services available to API to reduce number of API calls**
 
 ##### **Additional Enhancements**:
+-   **Criminal IP API Integration**
 -   **Revise Exporting Capabilities**: Overhaul the CSV export feature to produce more structured, actionable reports with prettier formatting and customizable output.
--   **Integrate Criminal IP API**: Add another source of IP and domain intelligence, providing a more complete picture of network indicators.
 -   **Integrate Sandbox APIs**:
    -   **CrowdStrike Falcon Sandbox**
    -   **Recorded Future Tria.ge**

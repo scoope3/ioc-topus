@@ -28,7 +28,21 @@ from ioc_topus.api.virustotal import (
     parse_virustotal_response,
 )
 from ioc_topus.api.urlscan import UrlscanClient
-from ioc_topus.api.validin import query_validin_domain, query_validin_ip, query_validin_hash
+from ioc_topus.api.validin import (
+    query_validin_domain, 
+    query_validin_ip, 
+    query_validin_hash,
+    query_validin_domain_dns_history,
+    query_validin_domain_osint_context,
+    query_validin_domain_osint_history,
+    query_validin_domain_dns_extra,
+    query_validin_domain_crawl_history,
+    query_validin_ip_dns_history,      
+    query_validin_ip_dns_extra,      
+    query_validin_ip_osint_history,    
+    query_validin_ip_osint_context,   
+    query_validin_ip_crawl_history
+)
 
 # ────────────────────────────────#
 #  Re-use *one* client per API
@@ -243,9 +257,38 @@ def fetch_and_parse_ioc_validinonly(ioc_str: str, results_queue: Queue) -> None:
         ioc_type_val = validate_ioc(ioc_str)
 
         if ioc_type_val == "domain":
-            q = Queue()
-            query_validin_domain(ioc_str, q)
-            results_queue.put(q.get())
+            # Create a temporary queue for each API call
+            results = []
+            
+            # Original pivots query
+            q1 = Queue()
+            query_validin_domain(ioc_str, q1)
+            results.append(q1.get())
+            
+            # DNS History
+            q2 = Queue()
+            query_validin_domain_dns_history(ioc_str, q2)
+            results.append(q2.get())
+            
+            # OSINT Context
+            q3 = Queue()
+            query_validin_domain_osint_context(ioc_str, q3)
+            results.append(q3.get())
+            
+            # OSINT History
+            q4 = Queue()
+            query_validin_domain_osint_history(ioc_str, q4)
+            results.append(q4.get())
+            
+            # DNS Extra
+            q5 = Queue()
+            query_validin_domain_dns_extra(ioc_str, q5)
+            results.append(q5.get())
+            
+            # Merge all results
+            merged = merge_api_results(ioc_str, *results)
+            results_queue.put(merged)
+            
         elif ioc_type_val == "ip_address":
             q = Queue()
             query_validin_ip(ioc_str, q)
@@ -348,28 +391,56 @@ def process_iocs_with_selective_apis(
 
         if use_validin and ioc_type in ("domain", "ip_address", "fingerprint_hash", "file_hash"):
             try:
-                vq = Queue()
+                # A list to hold all the tuples from the various Validin API calls
+                validin_results = []
+
                 if ioc_type == "domain":
-                    query_validin_domain(original_ioc_str, vq)
+                    # List of all domain-specific functions to call
+                    domain_functions = [
+                        query_validin_domain,
+                        query_validin_domain_dns_history,
+                        query_validin_domain_osint_context,
+                        query_validin_domain_osint_history,
+                        query_validin_domain_dns_extra,
+                        query_validin_domain_crawl_history, # New functionality
+                    ]
+                    # Call each function and add its result to our list
+                    for func in domain_functions:
+                        q = Queue()
+                        # NOTE: The Validin functions in validin.py need to be updated
+                        # to accept the API key directly if they don't already.
+                        # Assuming they are modified to work like VT and US clients.
+                        # If they still read from env, this call is fine.
+                        func(original_ioc_str, q)
+                        validin_results.append(_get_first_5tuple(q))
+
                 elif ioc_type == "ip_address":
-                    query_validin_ip(original_ioc_str, vq)
+                    # List of all IP-specific functions to call
+                    ip_functions = [
+                        query_validin_ip,
+                        query_validin_ip_dns_history,       # New functionality
+                        query_validin_ip_dns_extra,         # New functionality
+                        query_validin_ip_osint_history,     # New functionality
+                        query_validin_ip_osint_context,     # New functionality
+                        query_validin_ip_crawl_history      # New functionality
+                    ]
+                    # Call each function and add its result to our list
+                    for func in ip_functions:
+                        q = Queue()
+                        func(original_ioc_str, q)
+                        validin_results.append(_get_first_5tuple(q))
+
                 elif ioc_type in ("fingerprint_hash", "file_hash"):
-                    query_validin_hash(original_ioc_str, vq)
-                val_tup = _get_first_5tuple(vq)
-                
-                # Validate the IOC in the tuple
-                if val_tup[0] != original_ioc_str:
-                    print(f"WARNING: Validin changed IOC from '{original_ioc_str}' to '{val_tup[0]}'")
-                    val_tup = (original_ioc_str, val_tup[1], val_tup[2], val_tup[3], val_tup[4])
-                
-                partials.append(val_tup)
+                    q = Queue()
+                    query_validin_hash(original_ioc_str, q)
+                    validin_results.append(_get_first_5tuple(q))
+
+                # Add all the collected Validin results to the main partials list for merging
+                partials.extend(validin_results)
+
             except Exception as e:
-                error_msg = str(e)
-                if "429" in error_msg:
-                    error_msg = "Validin Error: API rate limit exceeded (no remaining quota)"
-                else:
-                    error_msg = f"Validin Error: {e}"
-                partials.append((original_ioc_str, ioc_type, None, [], error_msg))  # Empty sources list
+                error_msg = f"Validin Error: {e}"
+                partials.append((original_ioc_str, ioc_type, None, [], error_msg))
 
         # --- Step 2: If it's a URL, query the extracted hostname ---
         if ioc_type == "url":

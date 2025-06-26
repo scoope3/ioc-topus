@@ -4639,6 +4639,233 @@ def build_gui():
         copy_btn.config(command=copy_all_data)
         return tree2
 
+    def create_validin_dns_history_treeview(parent, dns_history_data):
+        """
+        Creates a treeview for Validin DNS History data.
+        """
+        tree_container = tk.Frame(parent, bg=parent["bg"])
+        tree_container.pack(fill="both", expand=True, pady=5)
+        
+        columns = ("Record Type", "Value", "First Seen", "Last Seen")
+        tv = ttk.Treeview(tree_container, columns=columns, show="headings", height=10)
+        
+        tv.heading("Record Type", text="Record Type", anchor="w")
+        tv.heading("Value", text="Value", anchor="w")
+        tv.heading("First Seen", text="First Seen", anchor="w")
+        tv.heading("Last Seen", text="Last Seen", anchor="w")
+        
+        tv.column("Record Type", width=150, anchor="w", stretch=False, minwidth=100)
+        tv.column("Value", width=300, anchor="w", stretch=True, minwidth=200)
+        tv.column("First Seen", width=200, anchor="w", stretch=False, minwidth=150)
+        tv.column("Last Seen", width=200, anchor="w", stretch=False, minwidth=150)
+        
+        # Helper to convert epoch to readable date
+        def epoch_to_date(epoch_time):
+            try:
+                if epoch_time:
+                    return datetime.fromtimestamp(epoch_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                return ""
+            except:
+                return str(epoch_time)
+        
+        records = dns_history_data.get("records", [])
+        if not records:
+            tv.insert("", "end", values=("No DNS history found", "", "", ""))
+        else:
+            for record in records:
+                tv.insert("", "end", values=(
+                    record.get("record_type", ""),
+                    record.get("value", ""),
+                    epoch_to_date(record.get("first_seen", 0)),
+                    epoch_to_date(record.get("last_seen", 0))
+                ))
+        
+        # Scrollbars
+        vsb = ttk.Scrollbar(tree_container, orient="vertical", command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        
+        hsb = ttk.Scrollbar(tree_container, orient="horizontal", command=tv.xview)
+        tv.configure(xscrollcommand=hsb.set)
+        hsb.pack(side="bottom", fill="x")
+        
+        tv.pack(side="left", fill="both", expand=True)
+        
+        # Bind right-click menu
+        bind_treeview_right_click_menu(tv)
+        
+        # Copy All button
+        btn_frame = tk.Frame(parent, bg=parent["bg"])
+        btn_frame.pack(side="bottom", anchor="sw", fill="x", pady=(3,0))
+        
+        copy_btn = tk.Button(
+            btn_frame, text="Copy All", bg="#9370DB", fg="white",
+            font=("Segoe UI", 10, "bold"), command=lambda: copy_all_treeview(tv)
+        )
+        copy_btn.pack(side="left", padx=5)
+        
+        return tv
+
+
+    def create_validin_dns_extra_treeview(parent, dns_extra_data):
+        """
+        Creates a treeview for Validin DNS Extra records.
+        """
+        tree_container = tk.Frame(parent, bg=parent["bg"])
+        tree_container.pack(fill="both", expand=True, pady=5)
+        
+        columns = ("Record Type", "Value", "First Seen", "Last Seen")
+        tv = ttk.Treeview(tree_container, columns=columns, show="headings", height=10)
+        
+        tv.heading("Record Type", text="Record Type", anchor="w")
+        tv.heading("Value", text="Value", anchor="w")
+        tv.heading("First Seen", text="First Seen", anchor="w")
+        tv.heading("Last Seen", text="Last Seen", anchor="w")
+        
+        tv.column("Record Type", width=150, anchor="w", stretch=False, minwidth=100)
+        tv.column("Value", width=400, anchor="w", stretch=True, minwidth=300)
+        tv.column("First Seen", width=200, anchor="w", stretch=False, minwidth=150)
+        tv.column("Last Seen", width=200, anchor="w", stretch=False, minwidth=150)
+        
+        def epoch_to_date(epoch_time):
+            try:
+                if epoch_time:
+                    return datetime.fromtimestamp(epoch_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                return ""
+            except:
+                return str(epoch_time)
+        
+        records = dns_extra_data.get("records", [])
+        if not records:
+            tv.insert("", "end", values=("No extra DNS records found", "", "", ""))
+        else:
+            for record in records:
+                tv.insert("", "end", values=(
+                    record.get("record_type", ""),
+                    record.get("value", ""),
+                    epoch_to_date(record.get("first_seen", 0)),
+                    epoch_to_date(record.get("last_seen", 0))
+                ))
+        
+        # Scrollbars
+        vsb = ttk.Scrollbar(tree_container, orient="vertical", command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        
+        hsb = ttk.Scrollbar(tree_container, orient="horizontal", command=tv.xview)
+        tv.configure(xscrollcommand=hsb.set)
+        hsb.pack(side="bottom", fill="x")
+        
+        tv.pack(side="left", fill="both", expand=True)
+        
+        bind_treeview_right_click_menu(tv)
+        
+        # Copy All button
+        btn_frame = tk.Frame(parent, bg=parent["bg"])
+        btn_frame.pack(side="bottom", anchor="sw", fill="x", pady=(3,0))
+        
+        copy_btn = tk.Button(
+            btn_frame, text="Copy All", bg="#9370DB", fg="white",
+            font=("Segoe UI", 10, "bold"), command=lambda: copy_all_treeview(tv)
+        )
+        copy_btn.pack(side="left", padx=5)
+        
+        return tv
+
+
+
+    def create_osint_textbox(parent, osint_data, title):
+        """
+        Creates a read-only textbox for OSINT data with a copy button.
+        Handles both Domain and IP OSINT data formatting.
+        """
+        def epoch_to_date(epoch_time):
+            """Helper to convert epoch to a readable date string."""
+            if not epoch_time: return "N/A"
+            try:
+                # datetime and timezone are imported at the top of gui/app.py
+                return datetime.fromtimestamp(epoch_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            except (TypeError, ValueError, OSError):
+                return str(epoch_time)
+
+        observations = osint_data.get("observations", [])
+
+        # Start building the formatted text
+        indicator_value = osint_data.get('domain') or osint_data.get('ip', '')
+        indicator_type_label = "Domain" if 'domain' in osint_data else "IP"
+        formatted_text = f"{indicator_type_label}: {indicator_value}\n"
+        formatted_text += f"Total Observations: {osint_data.get('total_observations', 0)}\n"
+        formatted_text += "-" * 80 + "\n\n"
+
+        if not observations:
+            formatted_text += "No observations found."
+        elif title in ["OSINT Context", "IP OSINT Context"]:
+            # Format for Context data (both Domain and IP)
+            for item in observations:
+                formatted_text += f"Title: {item.get('title', 'N/A')}\n"
+                formatted_text += f"Description: {item.get('description', 'N/A')}\n"
+                formatted_text += f"Category: {item.get('category', 'N/A')}\n"
+                formatted_text += f"Risk Category: {item.get('risk_cat', 'N/A')}\n"
+
+                custom_data = item.get('custom', {})
+                if custom_data:
+                    aliases = ", ".join(custom_data.get('aliases', []))
+                    references = custom_data.get('references', [])
+                    formatted_text += f"Aliases: {aliases}\n" if aliases else ""
+                    if references:
+                        formatted_text += "References:\n"
+                        for ref in references:
+                            formatted_text += f"  - {ref}\n"
+
+                ext_url = (custom_data.get('ext_url') if isinstance(custom_data, dict) 
+                        else None) or item.get('maltrail')
+                if ext_url:
+                    formatted_text += f"Source URL: {ext_url}\n"
+
+                formatted_text += "---\n"
+        elif title in ["OSINT History", "IP OSINT History"]:
+            # Format for History data (both Domain and IP)
+            for item in observations:
+                # Handle both formats - some have first_seen as epoch, others as ISO string
+                first_seen = item.get('first_seen')
+                last_seen = item.get('last_seen')
+                
+                # Check if it's an ISO string (contains 'T' or '-')
+                if isinstance(first_seen, str) and ('T' in first_seen or '-' in first_seen):
+                    first_seen_str = first_seen  # Already formatted
+                else:
+                    first_seen_str = epoch_to_date(first_seen)
+                    
+                if isinstance(last_seen, str) and ('T' in last_seen or '-' in last_seen):
+                    last_seen_str = last_seen  # Already formatted
+                else:
+                    last_seen_str = epoch_to_date(last_seen)
+
+                formatted_text += f"Value: {item.get('value', 'N/A')}\n"
+                formatted_text += f"First Seen: {first_seen_str}\n"
+                formatted_text += f"Last Seen: {last_seen_str}\n"
+
+                tags = ", ".join(item.get('tags', []))
+                formatted_text += f"Tags: {tags}\n" if tags else ""
+
+                url = item.get('url')
+                formatted_text += f"Source: {url}\n" if url else ""
+
+                formatted_text += "---\n"
+        else:
+            # Fallback to JSON dump if title is unexpected
+            formatted_text += json.dumps(observations, indent=2)
+
+        # Create the textbox with scroll
+        create_textbox_with_scroll(
+            parent,
+            formatted_text.strip(),
+            bg_color="#FFFFFF",
+            font_style=("Consolas", 10),
+            width=80,
+            height=15,
+            include_copy_button=True
+        )
     def create_vt_relationship_treeview(parent, data_list, column_header="Value"):
         """
         Builds a single-column Treeview for VT relationships.
@@ -4999,54 +5226,118 @@ def build_gui():
 
 
     def create_validin_treeview(parent, kv_map, group_name):
-            """
-            Given a dictionary (kv_map) of header-(joined)value pairs for a specific Validin group,
-            build a Treeview inside the given parent frame that shows these keys and values.
-            Skips rows where the value is empty.
+        """
+        Given a dictionary (kv_map) of header-(joined)value pairs for a specific Validin group,
+        build a Treeview inside the given parent frame that shows these keys and values.
+        Skips rows where the value is empty.
 
-            The treeview will have two columns ("Header" and "Value") and includes a horizontal
-            scrollbar, vertical scrollbar, right-click menu and a "Copy All" button.
-            """
-            # Create the Treeview with two columns.
-            tree = ttk.Treeview(parent, columns=("Header", "Value"), show="headings")
-            tree.heading("Header", text="Header", anchor="w")
-            tree.heading("Value", text="Value", anchor="w")
-            tree.column("Header", width=250, anchor="w", stretch=False, minwidth=150) 
-            tree.column("Value", width=600, anchor="w", stretch=True, minwidth=300)  
+        Special handling for CERT_DOMAIN-HOST to split domains into individual rows.
+        """
+        # Create the Treeview with two columns.
+        tree = ttk.Treeview(parent, columns=("Header", "Value"), show="headings")
+        tree.heading("Header", text="Header", anchor="w")
+        tree.heading("Value", text="Value", anchor="w")
+        tree.column("Header", width=250, anchor="w", stretch=False, minwidth=150) 
+        tree.column("Value", width=600, anchor="w", stretch=True, minwidth=300)  
 
-            rows_added = 0
-            # Insert each key/value as a row, ONLY if value is not empty.
-            for header, value in kv_map.items():
-                value_str = str(value).strip()
-                if value_str: # Check if the value is non-empty
-                    cleaned_value = value_str.lstrip(', ') # Strip leading comma/space just in case
+        rows_added = 0
+        # Insert each key/value as a row, ONLY if value is not empty.
+        for header, value in kv_map.items():
+            value_str = str(value).strip()
+            if value_str: # Check if the value is non-empty
+                cleaned_value = value_str.lstrip(', ') # Strip leading comma/space just in case
+                
+                # Special handling for CERT_DOMAIN-HOST to split domains
+                if header == "CERT_DOMAIN-HOST" and "," in cleaned_value:
+                    # Split the domains and create individual rows
+                    domains = [domain.strip() for domain in cleaned_value.split(",") if domain.strip()]
+                    for domain in domains:
+                        tree.insert("", "end", values=(header, domain))
+                        rows_added += 1
+                else:
+                    # Normal single-row insertion
                     tree.insert("", "end", values=(header, cleaned_value))
                     rows_added += 1
 
-            if rows_added == 0:
-                # tk.Label(parent, text="No data for this group.").pack()
-                return # Don't pack the empty tree or scrollbars
+        if rows_added == 0:
+            return # Don't pack the empty tree or scrollbars
 
-            # Set dynamic height based on rows added, up to a max (e.g., 10)
-            tree_height = min(rows_added, 10)
-            tree.configure(height=tree_height)
+        # Set dynamic height based on rows added, up to a max (e.g., 15 for cert domains)
+        tree_height = min(rows_added, 15)
+        tree.configure(height=tree_height)
 
-            # Attach both vertical and horizontal scrollbars.
-            vbar = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
-            hbar = ttk.Scrollbar(parent, orient="horizontal", command=tree.xview)
-            tree.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
-            vbar.pack(side="right", fill="y")
-            hbar.pack(side="bottom", fill="x")
-            tree.pack(fill="both", expand=True)
+        # Attach both vertical and horizontal scrollbars.
+        vbar = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
+        hbar = ttk.Scrollbar(parent, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+        vbar.pack(side="right", fill="y")
+        hbar.pack(side="bottom", fill="x")
+        tree.pack(fill="both", expand=True)
 
-            # Bind the right-click context menu
-            bind_treeview_right_click_menu(tree)
+        # Bind the right-click context menu
+        bind_treeview_right_click_menu(tree)
 
-            btn = tk.Button(parent, text="Copy All", command=lambda: copy_all_treeview(tree),
-                            bg="#9370DB", fg="white", font=("Segoe UI", 10, "bold"))
-            btn.pack(pady=5, side="bottom")
+        btn = tk.Button(parent, text="Copy All", command=lambda: copy_all_treeview(tree),
+                        bg="#9370DB", fg="white", font=("Segoe UI", 10, "bold"))
+        btn.pack(pady=5, side="bottom")
 
+    def create_dynamic_treeview(parent_frame, title, columns_config, data_list):
+            """
+            Creates a generic, multi-column Treeview inside a LabelFrame.
+            Handles data population, scrollbars, right-click menu, and a 'Copy All' button.
+            """
+            if not data_list:
+                return # Don't create anything if there's no data
 
+            # Main container for this section
+            lf = tk.LabelFrame(parent_frame, text=title, font=("Segoe UI", 11, "bold"), bg=BACKGROUND_COLOR, fg=TEXT_COLOR, padx=10, pady=10)
+            lf.pack(fill="x", expand=True, padx=5, pady=5)
+            
+            tree_container = tk.Frame(lf, bg=BACKGROUND_COLOR)
+            tree_container.pack(fill="both", expand=True)
+
+            column_keys = list(columns_config.keys())
+            tv = ttk.Treeview(tree_container, columns=column_keys, show="headings", height=8)
+
+            for key, config in columns_config.items():
+                tv.heading(key, text=config.get("text", key), anchor="w")
+                tv.column(key, width=config.get("width", 150), anchor="w", stretch=config.get("stretch", False), minwidth=config.get("minwidth", 80))
+
+            # Helper to convert epoch timestamps to a readable string
+            def epoch_to_date_str(epoch):
+                if not epoch: return ""
+                try: return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                except: return str(epoch)
+
+            # Populate the treeview
+            for item in data_list:
+                row_values = []
+                for key in column_keys:
+                    value = item.get(key, "")
+                    # Automatically convert timestamps for known date fields
+                    if key in ["date", "first_seen", "last_seen", "record_type"] and isinstance(value, (int, float)):
+                        row_values.append(epoch_to_date_str(value))
+                    else:
+                        row_values.append(str(value))
+                tv.insert("", "end", values=tuple(row_values))
+
+            # Add scrollbars and bind right-click menu
+            vsb = ttk.Scrollbar(tree_container, orient="vertical", command=tv.yview)
+            tv.configure(yscrollcommand=vsb.set)
+            vsb.pack(side="right", fill="y")
+            
+            hsb = ttk.Scrollbar(tree_container, orient="horizontal", command=tv.xview)
+            tv.configure(xscrollcommand=hsb.set)
+            hsb.pack(side="bottom", fill="x")
+
+            tv.pack(side="left", fill="both", expand=True)
+            bind_treeview_right_click_menu(tv)
+
+            # Add "Copy All" button
+            btn_frame = tk.Frame(lf, bg=BACKGROUND_COLOR)
+            btn_frame.pack(side="bottom", anchor="sw", fill="x", pady=(3,0))
+            copy_btn = tk.Button(btn_frame, text="Copy All", bg=BUTTON_COLOR, fg="white", font=FONT_BUTTON, command=lambda: copy_all_treeview(tv))
+            copy_btn.pack(side="left", padx=5)
     def show_details(event):
         """
         Called whenever the user selects an item in the main tree. Clears the 
@@ -5218,6 +5509,87 @@ def build_gui():
 
         if not has_indicator_details_data: # Check the overall flag for this tab
             ensure_not_empty(ioc_fields_inner)
+
+        validin_id_content_added = False
+        validin_id_frame = None
+
+        if "validin_osint_context" in data or "validin_osint_history" in data:
+            validin_id_frame = tk.LabelFrame(
+                ioc_fields_inner,
+                text="Validin",
+                font=("Segoe UI", 12, "bold"),
+                bg=BACKGROUND_COLOR,
+                fg=TEXT_COLOR,
+                padx=10,
+                pady=10
+            )
+            
+            # OSINT Context
+            if "validin_osint_context" in data:
+                osint_ctx_frame = tk.LabelFrame(
+                    validin_id_frame,
+                    text="OSINT Context",
+                    font=("Segoe UI", 11, "bold"),
+                    bg=BACKGROUND_COLOR,
+                    fg=TEXT_COLOR,
+                    padx=10,
+                    pady=5
+                )
+                osint_ctx_frame.pack(fill="x", padx=5, pady=5)
+                create_osint_textbox(osint_ctx_frame, data["validin_osint_context"], "OSINT Context")
+                validin_id_content_added = True
+            
+            # OSINT History
+            if "validin_osint_history" in data:
+                osint_hist_frame = tk.LabelFrame(
+                    validin_id_frame,
+                    text="OSINT History",
+                    font=("Segoe UI", 11, "bold"),
+                    bg=BACKGROUND_COLOR,
+                    fg=TEXT_COLOR,
+                    padx=10,
+                    pady=5
+                )
+                osint_hist_frame.pack(fill="x", padx=5, pady=5)
+                create_osint_textbox(osint_hist_frame, data["validin_osint_history"], "OSINT History")
+                validin_id_content_added = True
+            
+            if validin_id_content_added:
+                validin_id_frame.pack(fill="x", padx=5, pady=5)
+                has_indicator_details_data = True
+
+        # Section for Validin IP OSINT data
+        if "validin_ip_osint_context" in data or "validin_ip_osint_history" in data:
+            validin_ip_frame = tk.LabelFrame(
+                ioc_fields_inner,
+                text="Validin",
+                font=("Segoe UI", 12, "bold"),
+                bg=BACKGROUND_COLOR,
+                fg=TEXT_COLOR,
+                padx=10,
+                pady=10
+            )
+            validin_ip_frame_content_added = False
+
+            # Validin IP OSINT Context
+            ip_context_data = data.get('validin_ip_osint_context')
+            if ip_context_data and ip_context_data.get("observations"):
+                ip_context_frame = tk.LabelFrame(validin_ip_frame, text="IP OSINT Context", font=("Segoe UI", 11, "bold"),bg=BACKGROUND_COLOR, fg=TEXT_COLOR, padx=10, pady=5)
+                ip_context_frame.pack(pady=5, padx=5, fill='x', expand=True)
+                create_osint_textbox(ip_context_frame, ip_context_data, "IP OSINT Context")
+                validin_ip_frame_content_added = True
+
+            # Validin IP OSINT History
+            ip_history_data = data.get('validin_ip_osint_history')
+            if ip_history_data and ip_history_data.get("observations"):
+                ip_history_frame = tk.LabelFrame(validin_ip_frame, text="IP OSINT History", font=("Segoe UI", 11, "bold"),bg=BACKGROUND_COLOR, fg=TEXT_COLOR, padx=10, pady=5)
+                ip_history_frame.pack(pady=5, padx=5, fill='x', expand=True)
+                create_osint_textbox(ip_history_frame, ip_history_data, "IP OSINT History")
+                validin_ip_frame_content_added = True
+            
+            if validin_ip_frame_content_added:
+                validin_ip_frame.pack(fill="x", padx=5, pady=5)
+                has_indicator_details_data = True
         # ------------------------------
         # 2) CERTIFICATES tab
         #    => "last_http_response_headers" from VirusTotal if domain/IP/URL
@@ -5279,10 +5651,6 @@ def build_gui():
                 justify="center"
             ).pack(expand=True, fill="both", padx=10, pady=10)
 
-
-
-        # 3) DNS Analysis tab
-        # ------------------------------
 
 # 3) DNS Analysis tab
         # ------------------------------
@@ -5377,6 +5745,79 @@ def build_gui():
                 # If the frame was created but no content was ever added, destroy it
                 dns_vt_frame.destroy()
 
+        # Check for new Validin DNS data
+        if "validin_dns_history" in data or "validin_dns_extra" in data:
+            validin_dns_new_frame = tk.LabelFrame(
+                dns_inner,
+                text="Validin",
+                font=("Segoe UI", 12, "bold"),
+                bg=BACKGROUND_COLOR,
+                fg=TEXT_COLOR,
+                padx=10,
+                pady=10
+            )
+            
+            validin_dns_new_content_added = False
+            
+            # DNS History
+            if "validin_dns_history" in data:
+                dns_hist_frame = tk.LabelFrame(
+                    validin_dns_new_frame,
+                    text="DNS History",
+                    font=("Segoe UI", 11, "bold"),
+                    bg=BACKGROUND_COLOR,
+                    fg=TEXT_COLOR,
+                    padx=10,
+                    pady=5
+                )
+                dns_hist_frame.pack(fill="x", padx=5, pady=5)
+                create_validin_dns_history_treeview(dns_hist_frame, data["validin_dns_history"])
+                validin_dns_new_content_added = True
+            
+            # DNS Extra Records
+            if "validin_dns_extra" in data:
+                dns_extra_frame = tk.LabelFrame(
+                    validin_dns_new_frame,
+                    text="DNS Extra Records (MX, TXT, SOA, etc.)",
+                    font=("Segoe UI", 11, "bold"),
+                    bg=BACKGROUND_COLOR,
+                    fg=TEXT_COLOR,
+                    padx=10,
+                    pady=5
+                )
+                dns_extra_frame.pack(fill="x", padx=5, pady=5)
+                create_validin_dns_extra_treeview(dns_extra_frame, data["validin_dns_extra"])
+                validin_dns_new_content_added = True
+            
+            if validin_dns_new_content_added:
+                validin_dns_new_frame.pack(fill="x", padx=5, pady=10)
+                has_dns_data = True
+
+
+        # Validin - IP DNS History
+        ip_dns_history_data = data.get('validin_ip_dns_history')
+        if ip_dns_history_data and ip_dns_history_data.get("observations"):
+            columns = {
+                "hostname": {"text": "Hostname", "width": 400, "stretch": True},
+                "record_type": {"text": "Record Type", "width": 100},
+                "first_seen": {"text": "First Seen (UTC)", "width": 180},
+                "last_seen": {"text": "Last Seen (UTC)", "width": 180},
+            }
+            create_dynamic_treeview(dns_inner, "Validin - IP DNS History", columns, ip_dns_history_data.get("observations"))
+            has_dns_data = True
+
+        # Validin - IP DNS Extra
+        ip_dns_extra_data = data.get('validin_ip_dns_extra')
+        if ip_dns_extra_data and ip_dns_extra_data.get("observations"):
+            columns = {
+                "type": {"text": "Type", "width": 120},
+                "value": {"text": "Value", "width": 400, "stretch": True},
+                "first_seen": {"text": "First Seen (UTC)", "width": 180},
+                "last_seen": {"text": "Last Seen (UTC)", "width": 180},
+            }
+            create_dynamic_treeview(dns_inner, "Validin - IP DNS Extra Records", columns, ip_dns_extra_data.get("observations"))
+            has_dns_data = True
+
         if not has_dns_data:
             ensure_not_empty(dns_inner)
 
@@ -5384,10 +5825,7 @@ def build_gui():
         # 4) RELATIONSHIPS tab
         #    => urlscan Downloaded Files, urlscan Contacted Network Indicators, plus VT relationships
         # ------------------------------
-        # (a) urlscan Downloaded Files
-        # (A) A sub-frame for SecurityTrails relationships
         
-        # --- RELATIONSHIPS TAB ---
         relationship_data_found_in_tab = False # Track if ANYTHING is added to this tab
         # (B) VirusTotal Relationships Section
         vt_rels_data = data.get("relationships", {}) 
@@ -5821,7 +6259,48 @@ def build_gui():
                 elif 'validin_hash_frame' in locals() and validin_hash_frame.winfo_exists():
                     validin_hash_frame.destroy()
 
+        domain_crawl_data = data.get('validin_domain_crawl_history')
+        if domain_crawl_data and domain_crawl_data.get("observations"):
+            columns = {
+                "date": {"text": "Date", "width": 150},
+                "scheme": {"text": "Scheme", "width": 80},
+                "port": {"text": "Port", "width": 60},
+                "ip": {"text": "IP", "width": 120},
+                "title": {"text": "Page Title", "width": 200, "stretch": True},
+                "status": {"text": "Status", "width": 120},
+                "server": {"text": "Server", "width": 150},
+                "content_type": {"text": "Content-Type", "width": 150},
+                "location_redirect": {"text": "Redirect Location", "width": 200},
+                "length": {"text": "Length", "width": 80},
+                "body_hash": {"text": "Body Hash", "width": 200},
+                "header_hash": {"text": "Header Hash", "width": 150},
+                "banner_hash": {"text": "Banner Hash", "width": 150},
+                "cert_fingerprint": {"text": "Cert Fingerprint", "width": 200},
+                "cert_domains": {"text": "Cert Domains", "width": 150},
+                "jarm": {"text": "JARM", "width": 200},
+                "external_links": {"text": "External Links", "width": 150},
+                "class_0_hash": {"text": "Class 0 Hash", "width": 150},
+                "class_1_hash": {"text": "Class 1 Hash", "width": 150},
+            }
+            create_dynamic_treeview(web_analysis_inner, "Validin - Domain Crawl History", columns, domain_crawl_data.get("observations"))
+            has_web_data = True
 
+        # Validin - IP Crawl History
+        ip_crawl_data = data.get('validin_ip_crawl_history')
+        if ip_crawl_data and ip_crawl_data.get("observations"):
+            columns = {
+                "last_seen": {"text": "Last Seen (UTC)", "width": 180},
+                "port": {"text": "Port", "width": 60},
+                "scheme": {"text": "Scheme", "width": 70},
+                "banner": {"text": "Banner", "width": 350, "stretch": True},
+                "banner_0_hash": {"text": "Banner Hash (MD5)", "width": 280},
+                "header_hash": {"text": "Header Hash", "width": 280},
+                "start_line": {"text": "Start Line", "width": 300},
+                "error": {"text": "Error", "width": 250},
+                "ip": {"text": "IP", "width": 120},
+            }
+            create_dynamic_treeview(web_analysis_inner, "Validin - IP Crawl History", columns, ip_crawl_data.get("observations"))
+            has_web_data = True
         # Final check for Web Analysis tab
         if not has_web_data:
             ensure_not_empty(web_analysis_inner)

@@ -6,10 +6,10 @@ Very small helper around Validin’s “pivots” endpoints.
 
 from __future__ import annotations
 
-import requests               
-from typing import Dict
-
-from ioc_topus import config  # single-source-of-truth for API keys
+import requests
+import json              
+from queue import Queue
+from ioc_topus import config 
 
 
 def query_validin_domain(domain_str, results_queue):
@@ -136,8 +136,342 @@ def query_validin_domain(domain_str, results_queue):
     except Exception as e:
         results_queue.put((domain_str, "domain", None, ["Validin API"], str(e)))
 
+def query_validin_domain_dns_history(domain_str, results_queue):
+    """
+    Queries Validin API for historical DNS records (A, AAAA, NS) for a domain.
+    """
+    if not config.VALIDIN_API_KEY:
+        results_queue.put((domain_str, "domain", None, ["Validin API"], "No Validin API key set"))
+        return
+
+    base_url = "https://app.validin.com/api/axon"
+    endpoint = f"{base_url}/domain/dns/history/{domain_str}"
+    headers = {
+        "Authorization": f"Bearer {config.VALIDIN_API_KEY}"
+    }
+    
+    params = {
+        "wildcard": "false",
+        "limit": 250
+    }
+
+    try:
+        print(f"\n=== VALIDIN DNS HISTORY DEBUG ===")
+        print(f"Endpoint: {endpoint}")
+        print(f"Domain searched: {domain_str}")
+        
+        resp = validin_request(endpoint, headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        print(f"Full DNS History Response:")
+        print(json.dumps(data, indent=2))
+        print(f"=== END DNS HISTORY DEBUG ===\n")
+        
+        records = data.get("records", {})
+        
+        if not records:
+            results_queue.put((domain_str, "domain", {"validin_dns_history": {}}, ["Validin API"], None))
+            return
+
+        # Process DNS history records
+        dns_history_data = []
+        for record_type, values_list in records.items():
+            for item in values_list:
+                if isinstance(item, dict):
+                    dns_record = {
+                        "record_type": record_type,
+                        "value": item.get("value", ""),
+                        "first_seen": item.get("first_seen", 0),
+                        "last_seen": item.get("last_seen", 0)
+                    }
+                    dns_history_data.append(dns_record)
+        
+        final_data = {
+            "validin_dns_history": {
+                "records": dns_history_data,
+                "domain": domain_str,
+                "total_records": len(dns_history_data)
+            }
+        }
+
+        results_queue.put((domain_str, "domain", final_data, ["Validin API"], None))
+
+    except Exception as e:
+        results_queue.put((domain_str, "domain", None, ["Validin API"], str(e)))
 
 
+def query_validin_domain_osint_context(domain_str, results_queue):
+    """
+    Queries Validin API for OSINT context relevant to domain reputation.
+    """
+    if not config.VALIDIN_API_KEY:
+        results_queue.put((domain_str, "domain", None, ["Validin API"], "No Validin API key set"))
+        return
+
+    base_url = "https://app.validin.com/api/axon"
+    endpoint = f"{base_url}/domain/osint/context/{domain_str}"
+    headers = {
+        "Authorization": f"Bearer {config.VALIDIN_API_KEY}"
+    }
+    
+    params = {
+        "wildcard": "false",
+        "limit": 250
+    }
+
+    try:
+        print(f"\n=== VALIDIN OSINT CONTEXT DEBUG ===")
+        print(f"Endpoint: {endpoint}")
+        print(f"Domain searched: {domain_str}")
+        
+        resp = validin_request(endpoint, headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        print(f"Full OSINT Context Response:")
+        print(json.dumps(data, indent=2))
+        print(f"=== END OSINT CONTEXT DEBUG ===\n")
+        
+        records = data.get("records", {})
+        observations = records.get("context", [])
+        
+        final_data = {
+            "validin_osint_context": {
+                "observations": observations,
+                "domain": domain_str,
+                "total_observations": len(observations)
+            }
+        }
+
+        results_queue.put((domain_str, "domain", final_data, ["Validin API"], None))
+
+    except Exception as e:
+        results_queue.put((domain_str, "domain", None, ["Validin API"], str(e)))
+
+
+def query_validin_domain_osint_history(domain_str, results_queue):
+    """
+    Queries Validin API for all OSINT observations for a domain.
+    """
+    if not config.VALIDIN_API_KEY:
+        results_queue.put((domain_str, "domain", None, ["Validin API"], "No Validin API key set"))
+        return
+
+    base_url = "https://app.validin.com/api/axon"
+    endpoint = f"{base_url}/domain/osint/history/{domain_str}"
+    headers = {
+        "Authorization": f"Bearer {config.VALIDIN_API_KEY}"
+    }
+    
+    params = {
+        "wildcard": "false",
+        "limit": 250
+    }
+
+    try:
+        print(f"\n=== VALIDIN OSINT HISTORY DEBUG ===")
+        print(f"Endpoint: {endpoint}")
+        print(f"Domain searched: {domain_str}")
+        
+        resp = validin_request(endpoint, headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        print(f"Full OSINT History Response:")
+        print(json.dumps(data, indent=2))
+        print(f"=== END OSINT HISTORY DEBUG ===\n")
+        
+        records = data.get("records", {})
+        observations = records.get("osint", [])
+        
+        final_data = {
+            "validin_osint_history": {
+                "observations": observations,
+                "domain": domain_str,
+                "total_observations": len(observations)
+            }
+        }
+
+        results_queue.put((domain_str, "domain", final_data, ["Validin API"], None))
+
+    except Exception as e:
+        results_queue.put((domain_str, "domain", None, ["Validin API"], str(e)))
+
+
+def query_validin_domain_dns_extra(domain_str, results_queue):
+    """
+    Queries Validin API for extra DNS records (MX, TXT, SOA, etc.) for a domain.
+    """
+    if not config.VALIDIN_API_KEY:
+        results_queue.put((domain_str, "domain", None, ["Validin API"], "No Validin API key set"))
+        return
+
+    base_url = "https://app.validin.com/api/axon"
+    endpoint = f"{base_url}/domain/dns/extra/{domain_str}"
+    headers = {
+        "Authorization": f"Bearer {config.VALIDIN_API_KEY}"
+    }
+    
+    params = {
+        "wildcard": "false",
+        "limit": 250
+    }
+
+    try:
+        print(f"\n=== VALIDIN DNS EXTRA DEBUG ===")
+        print(f"Endpoint: {endpoint}")
+        print(f"Domain searched: {domain_str}")
+        
+        resp = validin_request(endpoint, headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        print(f"Full DNS Extra Response:")
+        print(json.dumps(data, indent=2))
+        print(f"=== END DNS EXTRA DEBUG ===\n")
+        
+        records = data.get("records", {})
+        
+        if not records:
+            results_queue.put((domain_str, "domain", {"validin_dns_extra": {}}, ["Validin API"], None))
+            return
+
+        # Process extra DNS records
+        dns_extra_data = []
+        for record_type, values_list in records.items():
+            for item in values_list:
+                if isinstance(item, dict):
+                    dns_record = {
+                        "record_type": record_type,
+                        "value": item.get("value", ""),
+                        "first_seen": item.get("first_seen", 0),
+                        "last_seen": item.get("last_seen", 0)
+                    }
+                    dns_extra_data.append(dns_record)
+        
+        final_data = {
+            "validin_dns_extra": {
+                "records": dns_extra_data,
+                "domain": domain_str,
+                "total_records": len(dns_extra_data)
+            }
+        }
+
+        results_queue.put((domain_str, "domain", final_data, ["Validin API"], None))
+
+    except Exception as e:
+        results_queue.put((domain_str, "domain", None, ["Validin API"], str(e)))
+
+
+def query_validin_domain_crawl_history(domain, results_q):
+    """
+    Query Validin for the crawl history of a domain.
+    """
+    api_key = config.VALIDIN_API_KEY
+    if not api_key:
+        results_q.put((domain, "domain", {"error": "Validin API key not configured."}, ["Validin API"], "Validin API key not set."))
+        return
+
+    endpoint = f"https://app.validin.com/api/axon/domain/crawl/history/{domain}"
+    print(f"=== VALIDIN DOMAIN CRAWL HISTORY DEBUG ===\nEndpoint: {endpoint}")
+
+    headers = {
+        "content-type": "application/json", 
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    params = {
+        "limit": 250,
+        "wildcard": False,
+        "time_format": "iso"
+    }
+
+    try:
+        response = requests.get(endpoint, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        print(f"Domain searched: {domain}\nFull Domain Crawl History Response:\n{json.dumps(data, indent=2)}")
+        print("=== END DOMAIN CRAWL HISTORY DEBUG ===")
+        
+        # Extract crawl data from the correct location: records.crawlr
+        crawl_records = data.get("records", {}).get("crawlr", [])
+        
+        # Transform the complex nested data into a rich format for pivoting
+        enhanced_observations = []
+        for record in crawl_records:
+            value_data = record.get("value", {})
+            if isinstance(value_data, dict):
+                # Extract comprehensive fields from the nested JSON
+                obs = {
+                    "date": record.get("first_seen", ""),
+                    "scheme": value_data.get("scheme", ""),
+                    "port": value_data.get("port", ""),
+                    "ip": value_data.get("ip", ""),
+                    "title": value_data.get("title", ""),
+                    "status": value_data.get("start_line", "").replace("HTTP/1.1 ", "") if value_data.get("start_line") else "",
+                    "server": "",  # Will extract from banner
+                    "content_type": "",  # Will extract from banner
+                    "location_redirect": value_data.get("location", ""),
+                    "length": value_data.get("length", ""),
+                    "body_hash": value_data.get("body_hash", ""),
+                    "header_hash": value_data.get("header_hash", ""),
+                    "banner_hash": value_data.get("banner_0_hash", ""),
+                    "cert_fingerprint": value_data.get("cert_fingerprint_sha256", ""),
+                    "cert_domains": "",  # Will extract from cert_details
+                    "jarm": "",  # Will extract from cert_details
+                    "external_links": "",  # Will extract from ext_links
+                    "class_0_hash": value_data.get("class_0_hash", ""),
+                    "class_1_hash": value_data.get("class_1_hash", ""),
+                }
+                
+                # Extract server info from banner
+                banner = value_data.get("banner", "")
+                if "Server:" in banner:
+                    server_line = [line for line in banner.split("\r\n") if line.startswith("Server:")][0]
+                    obs["server"] = server_line.replace("Server: ", "").strip()
+                
+                # Extract content type from banner
+                if "Content-Type:" in banner:
+                    content_type_line = [line for line in banner.split("\r\n") if line.startswith("Content-Type:")][0]
+                    obs["content_type"] = content_type_line.replace("Content-Type: ", "").strip()
+                
+                # Extract certificate domains and JARM
+                cert_details = value_data.get("cert_details", {})
+                if cert_details:
+                    domains = cert_details.get("domains", [])
+                    obs["cert_domains"] = ", ".join(domains) if domains else ""
+                    obs["jarm"] = cert_details.get("jarm", "")
+                
+                # Extract external links
+                ext_links = value_data.get("ext_links", {})
+                if ext_links:
+                    anchors = ext_links.get("anchors", [])
+                    obs["external_links"] = ", ".join(anchors) if anchors else ""
+                    
+            else:
+                # Fallback for unexpected data structure
+                obs = {
+                    "date": record.get("first_seen", ""),
+                    "scheme": "", "port": "", "ip": "", "title": "", "status": "",
+                    "server": "", "content_type": "", "location_redirect": "",
+                    "length": "", "body_hash": "", "header_hash": "", "banner_hash": "",
+                    "cert_fingerprint": "", "cert_domains": "", "jarm": "", 
+                    "external_links": "", "class_0_hash": "", "class_1_hash": ""
+                }
+            enhanced_observations.append(obs)
+        
+        results_q.put((domain, "domain", {"validin_domain_crawl_history": {
+            "domain": domain,
+            "total_observations": data.get("records_returned", 0),
+            "observations": enhanced_observations
+        }}, ["Validin API"], None))
+
+    except Exception as e:
+        error_msg = f"Validin Domain Crawl History request failed: {e}"
+        print(f"[ERROR] {error_msg}")
+        results_q.put((domain, "domain", None, [], error_msg))
+    
 def query_validin_ip(ip_address, results_queue):
     """
     Queries the Validin API for pivots related to an IP address.
@@ -235,7 +569,7 @@ def query_validin_ip(ip_address, results_queue):
 
         # Construct the final data dictionary, nesting under "validin_dns" structure for consistency
         final_data = {
-            "validin_dns": { # Keep the original top-level key expected by merging logic
+            "validin_dns": { 
                  "validin_dns_grouped": validin_cols,  # For the grouped treeviews
                  "validin_dns_lists": validin_lists    # For the separate list treeviews
              }
@@ -248,6 +582,230 @@ def query_validin_ip(ip_address, results_queue):
     except Exception as e:
         results_queue.put((ip_address, "ip_address", None, ["Validin API"], str(e)))
 
+
+def query_validin_ip_dns_history(ip, results_q):
+    """
+    Query Validin for the passive DNS history of an IP address.
+    """
+    api_key = config.VALIDIN_API_KEY
+    if not api_key:
+        results_q.put((ip, "ip_address", {"error": "Validin API key not configured."}, ["Validin API"], "Validin API key not set."))
+        return
+
+    endpoint = f"https://app.validin.com/api/axon/ip/dns/history/{ip}"
+    print(f"=== VALIDIN IP DNS HISTORY DEBUG ===\nEndpoint: {endpoint}")
+
+    headers = {
+        "content-type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+
+    params = {"time_format": "iso"}
+
+    try:
+        response = requests.get(endpoint, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        print(f"IP searched: {ip}\nFull IP DNS History Response:\n{json.dumps(data, indent=2)}")
+        print("=== END IP DNS HISTORY DEBUG ===")
+
+        observations = []
+        records = data.get("records", {})
+        for record_type, record_list in records.items():
+            for record in record_list:
+                observations.append({
+                    "hostname": record.get("value"),
+                    "first_seen": record.get("first_seen"),
+                    "last_seen": record.get("last_seen"),
+                    "record_type": record_type
+                })
+
+        results_q.put((ip, "ip_address", {"validin_ip_dns_history": {
+            "ip": ip,
+            "total_observations": data.get("records_returned", 0),
+            "observations": observations
+        }}, ["Validin API"], None))
+
+    except Exception as e:
+        error_msg = f"Validin IP DNS History request failed: {e}"
+        print(f"[ERROR] {error_msg}")
+        results_q.put((ip, "ip_address", None, [], error_msg))
+
+
+def query_validin_ip_dns_extra(ip, results_q):
+    """
+    Query Validin for extra DNS records for an IP.
+    """
+    api_key = config.VALIDIN_API_KEY
+    if not api_key:
+        results_q.put((ip, "ip_address", {"error": "Validin API key not configured."}, ["Validin API"], "Validin API key not set."))
+        return
+
+    endpoint = f"https://app.validin.com/api/axon/ip/dns/extra/{ip}"
+    print(f"=== VALIDIN IP DNS EXTRA DEBUG ===\nEndpoint: {endpoint}")
+
+    headers = {
+        "content-type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+
+    params = {"time_format": "iso"}
+
+    try:
+        response = requests.get(endpoint, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        print(f"IP searched: {ip}\nFull IP DNS Extra Response:\n{json.dumps(data, indent=2)}")
+        print("=== END IP DNS EXTRA DEBUG ===")
+
+        observations = []
+        records = data.get("records", {})
+        for record_type, record_list in records.items():
+            for record in record_list:
+                observations.append({
+                    "type": record_type,
+                    "value": record.get("value"),
+                    "first_seen": record.get("first_seen"),
+                    "last_seen": record.get("last_seen")
+                })
+
+        results_q.put((ip, "ip_address", {"validin_ip_dns_extra": {
+            "ip": ip,
+            "total_observations": data.get("records_returned", 0),
+            "observations": observations
+        }}, ["Validin API"], None))
+
+    except Exception as e:
+        error_msg = f"Validin IP DNS Extra request failed: {e}"
+        print(f"[ERROR] {error_msg}")
+        results_q.put((ip, "ip_address", None, [], error_msg))
+
+
+def query_validin_ip_osint_history(ip, results_q):
+    """
+    Query Validin for the OSINT history of an IP address.
+    """
+    api_key = config.VALIDIN_API_KEY
+    if not api_key:
+        results_q.put((ip, "ip_address", {"error": "Validin API key not configured."}, ["Validin API"], "Validin API key not set."))
+        return
+
+    endpoint = f"https://app.validin.com/api/axon/ip/osint/history/{ip}"
+    print(f"=== VALIDIN IP OSINT HISTORY DEBUG ===\nEndpoint: {endpoint}")
+
+    headers = {
+        "content-type": "application/json", 
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    params = {"time_format": "iso"}
+
+    try:
+        response = requests.get(endpoint, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        print(f"IP searched: {ip}\nFull IP OSINT History Response:\n{json.dumps(data, indent=2)}")
+        print("=== END IP OSINT HISTORY DEBUG ===")
+        
+        results_q.put((ip, "ip_address", {"validin_ip_osint_history": {
+            "ip": ip,
+            "total_observations": data.get("records_returned", 0),
+            "observations": data.get("records", {}).get("osint", [])
+        }}, ["Validin API"], None))
+
+    except Exception as e:
+        error_msg = f"Validin IP OSINT History request failed: {e}"
+        print(f"[ERROR] {error_msg}")
+        results_q.put((ip, "ip_address", None, [], error_msg))
+
+
+def query_validin_ip_osint_context(ip, results_q):
+    """
+    Query Validin for the OSINT context of an IP address.
+    """
+    api_key = config.VALIDIN_API_KEY
+    if not api_key:
+        results_q.put((ip, "ip_address", {"error": "Validin API key not configured."}, ["Validin API"], "Validin API key not set."))
+        return
+    
+    endpoint = f"https://app.validin.com/api/axon/ip/osint/context/{ip}"
+    print(f"=== VALIDIN IP OSINT CONTEXT DEBUG ===\nEndpoint: {endpoint}")
+    
+    headers = {
+        "content-type": "application/json", 
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    params = {"time_format": "iso"}
+    
+    try:
+        response = requests.get(endpoint, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        print(f"IP searched: {ip}\nFull IP OSINT Context Response:\n{json.dumps(data, indent=2)}")
+        print("=== END IP OSINT CONTEXT DEBUG ===")
+        
+        results_q.put((ip, "ip_address", {"validin_ip_osint_context": {
+            "ip": ip,
+            "total_observations": data.get("records_returned", 0),
+            "observations": data.get("records", {}).get("context", [])
+        }}, ["Validin API"], None))
+
+    except Exception as e:
+        error_msg = f"Validin IP OSINT Context request failed: {e}"
+        print(f"[ERROR] {error_msg}")
+        results_q.put((ip, "ip_address", None, [], error_msg))
+
+
+def query_validin_ip_crawl_history(ip, results_q):
+    """
+    Query Validin for the crawl history of an IP address.
+    """
+    api_key = config.VALIDIN_API_KEY
+    if not api_key:
+        results_q.put((ip, "ip_address", {"error": "Validin API key not configured."}, ["Validin API"], "Validin API key not set."))
+        return
+
+    endpoint = f"https://app.validin.com/api/axon/ip/crawl/history/{ip}"
+    print(f"=== VALIDIN IP CRAWL HISTORY DEBUG ===\nEndpoint: {endpoint}")
+
+    headers = {
+        "content-type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+
+    try:
+        response = requests.get(endpoint, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        print(f"IP searched: {ip}\nFull IP Crawl History Response:\n{json.dumps(data, indent=2)}")
+        print("=== END IP CRAWL HISTORY DEBUG ===")
+
+        observations = []
+        # The crawl history records are under the 'crawlr' key
+        records = data.get("records", {}).get("crawlr", [])
+        for record in records:
+            # The interesting details are in the nested 'value' dictionary.
+            observation = record.get("value", {})
+
+            # Add the 'first_seen' and 'last_seen' timestamps from the parent object.
+            observation['first_seen'] = record.get('first_seen')
+            observation['last_seen'] = record.get('last_seen')
+            
+            observations.append(observation)
+
+        # Send the processed data to the results queue
+        results_q.put((ip, "ip_address", {"validin_ip_crawl_history": {
+            "ip": ip,
+            "total_observations": data.get("records_returned", 0),
+            "observations": observations
+        }}, ["Validin API"], None))
+
+    except Exception as e:
+        error_msg = f"Validin IP Crawl History request failed: {e}"
+        print(f"[ERROR] {error_msg}")
+        results_q.put((ip, "ip_address", None, [], error_msg))
+    
 def query_validin_hash(hash_str, results_queue):
     """
     Queries the Validin API for pivots related to a hash/fingerprint.
